@@ -882,7 +882,7 @@ object DimaJoin{
       (leftIter, rightIter) => {
         //println(s"zipPartitions")
         val index = rightIter.next
-        val index2 = extraIndex.value // origin : extraIndex 
+        val index2 = extraIndex.value // origin : extraIndex.value  , new : extraIndex
         var countNum:Double = 0.0
         var pId = 0
         val partitionId = index.partitionId

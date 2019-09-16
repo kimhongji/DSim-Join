@@ -49,7 +49,7 @@ object DS_SimJoin_stream{
       var conf = new SparkConf().setAppName("DS_SimJoin_stream")
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
-      val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
+      val ssc = new StreamingContext(sc, Milliseconds(5000)) // 700
       val stream = ssc.socketTextStream("192.168.0.11", 9999)
       var AvgStream:Array[Long] = Array()
 
@@ -222,26 +222,7 @@ object DS_SimJoin_stream{
 
           //println(s"\n\n\n===> cachedPRDD")
           //cachedPRDD.collect().foreach(x => println(x._1))      // randmom 
-
-          val partitionedRDD = cachedPRDD.partitionBy(new SimilarityHashPartitioner(partition_num, partitionTable))
-
-          cachedIRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-            val data = iter.toArray
-            val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, partition_num)
-            Array(IPartition(partitionId, index, data
-              .map(x => ((BuildSig.sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-                BuildSig.createInverse(BuildSig.sortByValue(x._2._1._1), multiGroup.value, threshold)
-              .map(x => {
-                if (x._1.length > 0) {
-                  (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-                } else {
-                  (Array[Int](), Array[Boolean]())
-                }
-              })), x._2._2)))).iterator
-            }, preservesPartitioning = true).cache()        
-
-          var t0 = System.currentTimeMillis
-
+        
 
           var input_file = sqlContext.read.json(rdd)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.rdd
@@ -260,14 +241,35 @@ object DS_SimJoin_stream{
                 .flatMapValues(x => x)
                 .map(x => { ((x._1._1, x._1._2, x._2._1), x._2._2)})
                 .flatMapValues(x => x)
-                .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).cache()       
+                .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).cache() //x._2._1 => sig       
           
+
+          val partitionedRDD = cachedPRDD.partitionBy(new SimilarityHashPartitioner(partition_num, partitionTable))
+
+          cachedIRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
+            val data = iter.toArray
+            val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, partition_num)
+            Array(IPartition(partitionId, index, data
+              .map(x => ((BuildSig.sortByValue(x._2._1._1).hashCode, x._2._1._2, 
+                BuildSig.createInverse(BuildSig.sortByValue(x._2._1._1), multiGroup.value, threshold)
+              .map(x => {
+                if (x._1.length > 0) {
+                  (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
+                } else {
+                  (Array[Int](), Array[Boolean]())
+                }
+              })), x._2._2)))).iterator
+            }, preservesPartitioning = true).cache()    // add preservePartitioning         
+
+          var t0 = System.currentTimeMillis
+
           val dima_PRDD = DimaJoin.main(sc, cachedIRDD, queryRDD , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
           
           val dima_RDD = dima_PRDD._1.partitionBy(hashP)
           sc = dima_PRDD._2       
 
           cogroupedRDD = query_hashRDD.cogroup(dima_RDD).filter(s => (!s._2._1.isEmpty)).cache() // DATA FORMAT !!!!
+          //cogroupedRDD = queryForIndex.cogroup(cachedIRDD).filter(s => (!s._2._1.isEmpty)).cache() // DATA FORMAT !!!!
 
           //println(s"\n\n\n===> cogroupedRDD")
           //cogroupedRDD.collect().foreach(println) // randmom          
@@ -415,7 +417,7 @@ object DS_SimJoin_stream{
                           (Array[Int](), Array[Boolean]())
                         }
                       })), x._2._2)))).iterator
-                    }).cache()                  
+                    }, preservesPartitioning = true).cache()                  
 
                   t1 = System.currentTimeMillis
 
