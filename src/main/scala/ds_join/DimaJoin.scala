@@ -447,7 +447,7 @@ object DimaJoin{
 
   def partition_r(
     ss1: String,
-    indexNum: Broadcast[scala.collection.Map[(Int, Boolean), Long]],
+    indexNum: Broadcast[scala.collection.Map[(Int, Boolean), Long]], //frequencyTable
     partitionTable: Broadcast[scala.collection.immutable.Map[Int, Int]],
     minimum: Int,
     group: Broadcast[Array[(Int, Int)]],
@@ -515,7 +515,6 @@ object DimaJoin{
           else Array(true)
         })
       }
-      var mini_start_3 = System.currentTimeMillis();
       // probe seg/del signatures of this probe record
       var result1 = ArrayBuffer[(Int, Boolean, Array[Boolean], Boolean, Int)]()
       for (i <- 1 until H + 1) {
@@ -535,10 +534,7 @@ object DimaJoin{
           }
         }
       }
-      result += Tuple2(records.toArray, result1.toArray)
-      var mini_end_3 = System.currentTimeMillis();
-      //println(" ------time|2|Dima-queryZipPartition_up_up_result: " + (mini_end_3 - mini_start_3) + " ms")
-      
+      result += Tuple2(records.toArray, result1.toArray)      
     }
 
     result.toArray
@@ -550,6 +546,7 @@ object DimaJoin{
             //data: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))], 
             data: org.apache.spark.rdd.RDD[IPartition],
             query: org.apache.spark.rdd.RDD[(String, String)],
+            //query: org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))],
             frequencyTable: Broadcast[scala.collection.Map[(Int, Boolean), Long]],
             partitionTable: Broadcast[scala.collection.immutable.Map[Int, Int]],
             multiGroup:Broadcast[Array[(Int, Int)]],
@@ -558,6 +555,7 @@ object DimaJoin{
             : (org.apache.spark.rdd.RDD[(Int, String)], org.apache.spark.SparkContext) = { 
 
   numPartitions = numPartition //default : 2
+  var hashP = new HashPartitioner(numPartitions)
   //val threshold:Double = 0.8  // threshold!!!!!!!
   val alpha = 0.95
   val topDegree = 0
@@ -756,8 +754,9 @@ object DimaJoin{
 
   var mini_start_1 = System.currentTimeMillis();
 
+  
    val query_rdd = queryRDD
-      .map(x => (sortByValue(x._1), x._2))
+       .map(x => (sortByValue(x._1), x._2))
       // .distinct
       .map(x => ((x._1.hashCode, x._2, x._1),
         partition_r(
@@ -772,6 +771,7 @@ object DimaJoin{
       .map(x => {
         (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
       })
+      
 
    var mini_end_1 = System.currentTimeMillis();
 
@@ -812,12 +812,11 @@ object DimaJoin{
           }
         }
         result += in
-        max_id = in
       }
       result.toArray
     }) // dfd
 
-    println("max : "+maxPartitionId.value.mkString(","))
+    //println("max : "+maxPartitionId.value.mkString(","))
     var endTime_2 = System.currentTimeMillis();
 
     var mini_start_2 = System.currentTimeMillis();
@@ -861,23 +860,8 @@ object DimaJoin{
 
     var ans = mutable.ListBuffer[(Int, String, String)]()
     var comList= mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)  , ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)) ]()
-   /* 
-    var a:IPartition = null
-    var b:IPartition = null
-    var ex_array:Array[IPartition] = Array()
 
-    if(extra_count > 0){
-      for(i<- 0 to extra_count.toInt ) ex_array +:= extraIndex2.lookup(i)(0)(0)
-    }
-    
-
-    var mini_start_3 = System.currentTimeMillis();
-    var pindex2:IPartition = null
-    if(max_id > 0 ) pindex2 = extraIndex.take(1)(0)(0)//.cache()
-    var mini_end_3 = System.currentTimeMillis();
-   
-*/
-    var startTime_1 = System.currentTimeMillis();
+   var startTime_1 = System.currentTimeMillis();
     val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
       (leftIter, rightIter) => {
         //println(s"zipPartitions")
@@ -895,43 +879,8 @@ object DimaJoin{
             if (positionOfQ != partitionId) {
               var (c, w) = (List[Int](), -1)
               var goon = true
-              var i = 1 // default 0 
-              /*
-              while (goon && i < extra_count) { //extra_count <== index2.length //start
-                  if (ex_array(i).partitionId == positionOfQ) {
-                  c = ex_array(i).index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-                  w = i
-                  goon = false
-                }
-                i += 1
-              }//end
-              for(indexFor <- extraIndex2){
-                  if(goon){
-                    if(indexFor(0).partitionId == positionOfQ)
-                    c = indexFor(0).index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-                    w = i
-                    goon = false
-                  }
-              }//end
-              
-              while (goon && i < index2.length) { //extra_count <== index2.length //start
-                  if (index2(i)(0).partitionId == positionOfQ) {
-                  c = index2(i)(0).index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-                  w = i
-                  goon = false
-                }
-                i += 1
-              }//end
-              
-              while (goon && max_id > 0) { //extra_count <== index2.length //start
-                  IPartition_temp = index2
-                  if (IPartition_temp.partitionId == positionOfQ) {
-                  c = IPartition_temp.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-                  w = i
-                  goon = false
-                }
-              }//end 
-              */
+              var i = 0 // default 0 
+
               while (goon && i < index2.length) { //extra_count <== index2.length //start
                   if (index2(i)(0).partitionId == positionOfQ) {
                   c = index2(i)(0).index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
@@ -945,7 +894,6 @@ object DimaJoin{
               (index.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List()), -1)
             }
           }
-          //println(s"candidate : (" + candidate.mkString(" ") + ")")
           for (i <- candidate) {
             val data = {
               if (whichIndex < 0 ) {
