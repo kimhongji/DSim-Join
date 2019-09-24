@@ -33,7 +33,7 @@ import scala.collection.mutable
 1. for shell : ./bin/spark-shell --conf "spark.mongodb.input.uri=mongodb://127.0.0.1/REVIEPreferred"\
 --packages org.mongodb.spark:mongo-spark-connector_2.11:2.1.0 /home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar
 
-./bin/spark-shell --packages org.mongodbcala:mongo-scala-driver_2.11:2.0.0 org.mongodb.scala:mongo-scala-bson_2.11:2.0.0 org.mongodb:bson.0.0/home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar
+./bin/spark-shell --packages org.mongodb.scala:mongo-scala-driver_2.11:2.0.0 org.mongodb.scala:mongo-scala-bson_2.11:2.0.0 org.mongodb:bson.0.0/home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar
 
 2. for submit : ./bin/spark-submit --class ds_join.DS_SimJoin_stream --master $master /home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar $num 
 
@@ -125,7 +125,8 @@ object DS_SimJoin_stream{
       var cogroupedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)], Iterable[((String, String), Boolean)]))] = null
       //Origin//var hitedRDD:org.apache.spark.rdd.RDD[(Int, (String, String))] = null
       var hitedRDD:org.apache.spark.rdd.RDD[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean)))] = null
-      var missedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[String], Iterable[String]))] = null
+      var missedRDD:org.apache.spark.rdd.RDD[(Int, String)] = null
+      //var missedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[String], Iterable[String]))] = null
       //var missedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[((String, String), Boolean)], Iterable[((String, String), Boolean)]))] = null
       var missedFRDD:org.apache.spark.rdd.RDD[(Int, String)] = null
       //var missedFRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
@@ -135,6 +136,7 @@ object DS_SimJoin_stream{
       var indexed:org.apache.spark.rdd.RDD[IPartition] = null
       var cachedIRDD:org.apache.spark.rdd.RDD[IPartition] = null
       var queryIRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
+      var temp:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
       var queryForIndex:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
       var DB_IRDD:org.apache.spark.rdd.RDD[IPartition] = null
       var multiGroup:Broadcast[Array[(Int, Int)]] = null
@@ -151,6 +153,8 @@ object DS_SimJoin_stream{
       var joinedPRDD_missed:org.apache.spark.rdd.RDD[(Int, String)] = null      
       var hit_dima_PRDD:(org.apache.spark.rdd.RDD[(Int, String)], org.apache.spark.SparkContext) = null
       var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, String)] = null
+      var hitquery:org.apache.spark.rdd.RDD[(String, String)] = null
+      var hitcache:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
 
       var CacheThread: Thread = null
       var RemoveListThread: Thread = null
@@ -170,6 +174,7 @@ object DS_SimJoin_stream{
       val db_coll_name = "musical_sig"+data_num
       val coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_"+data_num 
       val cache_name = "../ref/review_data/Musical_Instruments_sig100.json"   
+      var qlist = List[Int]()
 
       //change mongospark version = 2.2.6  to 2.1.0
       /*index collection*/
@@ -256,88 +261,66 @@ object DS_SimJoin_stream{
           //currCogTime = t1 - t0
 
           /* hit data join thread */
-         // val hitThread = new Thread(){
-         //   override def run = {
-             var t2 = System.currentTimeMillis
-
-              hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
-                .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
-                .partitionBy(hashP) //add partitionby
-
-              hitedRDD.cache()
-
-              val hitquery = hitedRDD.map(x => (x._2._1._1._2, x._2._1._1._2)).distinct().cache()      //query index (signature) ( string, string )
-              val hitcache= hitedRDD.map(x => (x._1, x._2._2)).cache()  //cache index (signature)
-
-              partitionedRDD = hitcache.partitionBy(new SimilarityHashPartitioner(partition_num, partitionTable))
-
-              cachedIRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-               val data = iter.toArray
-                val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, partition_num)
-                Array(IPartition(partitionId, index, data
-                  .map(x => ((BuildSig.sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-                    BuildSig.createInverse(BuildSig.sortByValue(x._2._1._1), multiGroup.value, threshold)
-                  .map(x => {
-                    if (x._1.length > 0) {
-                      (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-                    } else {
-                      (Array[Int](), Array[Boolean]())
-                    }
-                  })), x._2._2)))).iterator
-                }, preservesPartitioning = true).cache()    // add preservePartitioning 
-
-              hit_dima_PRDD = DimaJoin.main(sc, cachedIRDD, hitquery , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
-          
-              hit_dima_RDD = hit_dima_PRDD._1.partitionBy(hashP)
-              sc = hit_dima_PRDD._2 
-
-              val hitdimacount = hit_dima_RDD.count()
-
-              //println(s"\n\n\n===> hitedRDD")
-              //hitedRDD.collect().foreach(println)// randmom
-
-              hitquery.unpersist()
-              hitcache.unpersist() 
-
-              var t3 = System.currentTimeMillis
+          //val hitFuture = Future{
              
-              hit_sum = hit_sum + hitdimacount
-              println("data|hc|hitdata dima(string) : "+hitdimacount)
-              println("time|3|hit dima time(currCogTime): " + (t3 - t2) + " ms")
-              currCogTime = t3 - t2
-          //  }
-        //  }
+         //    val hitThread = new Thread(){
+         //       override def run = {
+                 
+                  hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
+                    .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
+                    .partitionBy(hashP) //add partitionby
 
-          val hitThread = new Thread(){
-            override def run = {
+                  hitedRDD.cache()
 
-              
-            }
-          }
+                  hitquery = hitedRDD.map(x => (x._2._1._1._2, x._2._1._1._2)).distinct().cache()      //query index (signature) ( string, string )
+                  hitcache= hitedRDD.map(x => (x._1, x._2._2)).cache()  //cache index (signature)
+           //     }//end thread run
+           //   }//end thread
+           //   hitThread.start()
+           //   hitThread.join()
+
+                var t2 = System.currentTimeMillis
+                hit_dima_PRDD = DimaJoin.main(sc, hitcache, hitquery , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
+                
+                hit_dima_RDD = hit_dima_PRDD._1.partitionBy(hashP)
+                sc = hit_dima_PRDD._2 
+
+                val hitdimacount = hit_dima_RDD.count()
+
+                //println(s"\n\n\n===> hitedRDD")
+                //hitedRDD.collect().foreach(println)// randmom
+
+                hitquery.unpersist()
+                hitcache.unpersist() 
+
+                var t3 = System.currentTimeMillis
+                 
+                hit_sum = hit_sum + hitdimacount
+                println("data|hc|hitdata dima(string) : "+hitdimacount)
+                println("time|3|hit dima time(currCogTime): " + (t3 - t2) + " ms")
+                currCogTime = t3 - t2
+           //}//end future
+
+
           /* miss data join thread */
           val missedFuture = Future{
 
               var t0 = System.currentTimeMillis
               var missedRDDThread: Thread = null
 
+              missedRDD = query_hashRDD.subtractByKey(hit_dima_RDD, hashP).cache()
               
-              var miss_cogroupedRDD = query_hashRDD.cogroup(hit_dima_RDD).filter(s => (!s._2._1.isEmpty)).cache() // DATA FORMAT !!!!
-
-              missedRDD = miss_cogroupedRDD.filter(s => (s._2._2.isEmpty))
-              missedRDD.cache()
-
-                  
               missedRDDThread = new Thread(){
                   override def run = {
-                      missedFRDD = missedRDD.flatMapValues{case(x,y) => x}
-                      missedIPRDD = missedFRDD.map(x => (x._2, x._2)).cache()
+                      missedIPRDD = missedRDD.map(x => (x._2, x._2)).cache()
+                      missedKeysCount = missedIPRDD.count()
 
-                      //missedIPRDD = missedFRDD.map(x => (x._2._1._2, x._2._1._2)).distinct().cache()
+                      queryIRDD = queryForIndex.map(x => (x._2._2.hashCode(), x))
+                                              .subtractByKey(hit_dima_RDD, hashP)
+                                              .map(x => (x._2)).cache()
 
-                      //println(s"\n\n\n===> missedFRDD")
-                      //missedFRDD.collect().foreach(println)  // randmom
+                      queryIRDD.localCheckpoint
 
-                      missedKeysCount = missedFRDD.cache().count()
                       println("data|mc|missedKeys count: " + missedKeysCount)
                   }
               }
@@ -354,55 +337,60 @@ object DS_SimJoin_stream{
             
                   missedRDDThread.join()
 
-                  t0 = System.currentTimeMillis 
-
-                  /*build query signature*/
-
-                  var queryIRDD2 = missedIPRDD
-                     .map(x => (DimaJoin.sortByValue(x._1), x._2))
-                     .map(x => ((x._1.hashCode, x._2, x._1)))
-
-                  queryIRDD2.foreach(x => println(x._1+", "+x._2+", "+x._3))
-
-                  queryIRDD = missedIPRDD
-                     .map(x => (DimaJoin.sortByValue(x._1), x._2))
-                     .map(x => ((x._1.hashCode, x._2, x._1),
-                     DimaJoin.partition_r(
-                        x._1, frequencyTable, partitionTable, minimum, multiGroup,
-                        threshold, alpha, partition_num, topDegree
-                      )))
-                    .flatMapValues(x => x)
-                    .map(x => { ((x._1._1, x._1._2, x._2._1), x._2._2)})
-                    .flatMapValues(x => x)
-                    .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))})
-                    .cache()
-                
+                  /*build query signature*/             
 
                   t0 = System.currentTimeMillis 
                   var test_start = System.currentTimeMillis
-
-              
+                
+                  //println(queryIRDD.toDebugString)
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
                       var client: MongoClient = MongoClient("mongodb://192.168.0.11:27017")
                       var database: MongoDatabase = client.getDatabase("REVIEW")
                       var collection: MongoCollection[Document] = database.getCollection(db_coll_name) 
                       
-                      var qlist = List[Int]()
+                      var qlist_map = qlist
                       var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
                       
                         if(!iter.isEmpty){
 
                           iter.foreach(q =>
-                            qlist ::= q._1.toInt
+                            qlist_map ::= q._1.toInt
                           )
-                          var query = in("signature", qlist:_*)
-                          var temp = collection.find(query) //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
-                          
-                          var awaited = Await.result(temp.toFuture, scala.concurrent.duration.Duration.Inf)
+                          var pquery = qlist_map.partition(_%2 ==0)
+                          var query1 = in("signature", pquery._1:_*)
+                          var query2 = in("signature", pquery._2:_*)
+                          var temp1 = collection.find(query1)
+                          var temp2 = collection.find(query2)
+                          /*
+                          var temp:Future[Array[(Int, ((String, String), Boolean))]] = Future{
+                            var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
+                            var re1 = collection.find(query1)
+                            for(data <- re1){
+                              dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
+                            }
+                            dbData
+                          } //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
+                          var temp2:Future[Array[(Int, ((String, String), Boolean))]] = Future{
+                            var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
+                            var re2 = collection.find(query2)
+                            for(data <- re2){
+                              dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
+                            }
+                            dbData
+                          } //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
+                          */
+                          var awaited = Await.result(temp1.toFuture, scala.concurrent.duration.Duration.Inf)
+                          var awaited2 = Await.result(temp2.toFuture, scala.concurrent.duration.Duration.Inf)
 
                           for(data <- awaited){
                             dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
-                          }                         
+                          }  
+                          for(data <- awaited2){
+                            dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
+                          }  
+
+
+
                         }
                         client.close()
                         
@@ -417,30 +405,9 @@ object DS_SimJoin_stream{
 
                   var test_end = System.currentTimeMillis
                   println("time|4-0|miss query_mapPartition: " + (test_end - test_start) + " ms")
-                 // t1 = System.currentTimeMillis
-
-                 // println("time|4|query_mapPartition & cache_buildIndex data(currDBTime): " + (t1 - t0) + " ms")
-                 // currDBTime = t1 - t0
-
+                 
                   //println(s"**===> DB_PRDD")
                   //DB_PRDD.collect().foreach(println)                  
-
-                  val partitionedDB_RDD = DB_PRDD.partitionBy(new SimilarityHashPartitioner(partition_num, partitionTable))
-
-                  DB_IRDD = partitionedDB_RDD.mapPartitionsWithIndex((partitionId, iter) => {
-                    val data = iter.toArray
-                    val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, partition_num)
-                    Array(IPartition(partitionId, index, data
-                      .map(x => ((BuildSig.sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-                        BuildSig.createInverse(BuildSig.sortByValue(x._2._1._1), multiGroup.value, threshold)
-                      .map(x => {
-                       if (x._1.length > 0) {
-                          (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-                        } else {
-                          (Array[Int](), Array[Boolean]())
-                        }
-                      })), x._2._2)))).iterator
-                    }, preservesPartitioning = true).cache()                  
 
                   t1 = System.currentTimeMillis
 
@@ -453,10 +420,13 @@ object DS_SimJoin_stream{
                   /* join missed data */
                   t0 = System.currentTimeMillis                  
 
-                  joinedPRDD_missed_total = DimaJoin.main(sc, DB_IRDD, missedIPRDD , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
-                  
+                  joinedPRDD_missed_total = DimaJoin.main(sc, DB_PRDD, missedIPRDD , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
+                  //original DB_IRDD
+
                   joinedPRDD_missed = joinedPRDD_missed_total._1.partitionBy(hashP).cache()
                   sc = joinedPRDD_missed_total._2
+
+                  joinedPRDD_missed.localCheckpoint
 
                   var joinedPRDD_missed_count = joinedPRDD_missed.count()
                   println("data|jm|joined_miss count: " + joinedPRDD_missed_count)
@@ -464,7 +434,7 @@ object DS_SimJoin_stream{
                   //println(s"\n\n\n===> joinedPRDD_missed")
                   //joinedPRDD_missed.collect().foreach(println)      // randmom              
 
-                  miss_cogroupedRDD.unpersist()
+                 // miss_cogroupedRDD.unpersist()
                   missedIPRDD.unpersist()
                   queryIRDD.unpersist()
 
@@ -518,7 +488,6 @@ object DS_SimJoin_stream{
                 LRU_Tmp.cache().count()
                 LRU_RDD.unpersist()
                 
-
                 LRU_RDD = LRU_Tmp
 
                 var t1 = System.currentTimeMillis
@@ -601,35 +570,25 @@ object DS_SimJoin_stream{
 
               var t0 = System.currentTimeMillis
 
-              //cachedPRDDDataCount = cachedPRDD.cache().count() // check cache cout
-             // println("data|c|cachedPRDDDataCount(before union) 1: " + cachedPRDDDataCount) 
-             // if(cachedPRDDDataCount > DB_count * 0.7 && DB_count < query_count){
-             //   println("log|cu|cachedPRDD doesn't update")
-            //    cacheTmp = DB_PRDD
-             // }else{              
-
-                //println("log|cu|cachedPRDD update")
-
-                if(enableCacheCleaningFunction_th == false){// disable cache cleaning
+              if(enableCacheCleaningFunction_th == false){// disable cache cleaning
                   cacheTmp = cachedPRDD.union(DB_PRDD).partitionBy(hashP)
-                }else{
+              }else{
+                if(isEmpty_missedData_th){
+                  cacheTmp = cachedPRDD
+                }else if(!removeList.isEmpty){
+                  cacheTmp = cachedPRDD.subtractByKey(removeList, hashP).union(DB_PRDD)
+                  //cacheTmp = cachedPRDD.subtractByKey(removeList, hashP).union(DB_PRDD_filter)
+                  isPerformed_CC_PrevIter = true
+                }else {
+                  cacheTmp = cachedPRDD.union(DB_PRDD).partitionBy(hashP)
+               }
+              }
+              if(streamingIteration % checkoutval == 0){
+                println("=======Localchechpoint======")
+                cacheTmp.localCheckpoint
+              }
+              cacheTmp = cacheTmp.distinct()
 
-                 if(isEmpty_missedData_th){
-                    cacheTmp = cachedPRDD
-                  }else if(!removeList.isEmpty){
-                    cacheTmp = cachedPRDD.subtractByKey(removeList, hashP).union(DB_PRDD)
-                    //cacheTmp = cachedPRDD.subtractByKey(removeList, hashP).union(DB_PRDD_filter)
-                    isPerformed_CC_PrevIter = true
-                  }else {
-                    cacheTmp = cachedPRDD.union(DB_PRDD).partitionBy(hashP)
-                 }
-                }
-                if(streamingIteration % checkoutval == 0){
-                  println("=======Localchechpoint======")
-                  cacheTmp.localCheckpoint
-                }
-                cacheTmp = cacheTmp.distinct()
-              //}
                
               cachedDataCount = cacheTmp.cache().count() // check cache cout
               globalCacheCount = cachedDataCount
@@ -664,6 +623,7 @@ object DS_SimJoin_stream{
 
           //hitThread.start()
           t0 = System.currentTimeMillis
+          //val n2 =Await.result(hitFuture, scala.concurrent.duration.Duration.Inf)
           val n =Await.result(missedFuture, scala.concurrent.duration.Duration.Inf)
           t1 = System.currentTimeMillis
           //hitThread.join()
@@ -675,16 +635,12 @@ object DS_SimJoin_stream{
           if(isEmpty_missedData){
             outputCount = hitedRDD.count //origin hitedRDD.count
           }else{
-            //var righthitedRDD = hitedRDD.map(x =>  (x._1, x._2._2)).partitionBy(hashP)
             var righthitedRDD = hit_dima_RDD
             
             var output = righthitedRDD.union(joinedPRDD_missed)
 
             val outputReduce = output
             outputCount = outputReduce.count()
-
-           // println(s"\n\n\n===> outputReduce")
-           // outputReduce.collect().foreach(x => print("("+x._1+" ,"+x._2.hashCode()+" ) ."))   //randmom 
           }
           println("data|out|output data: " + outputCount)       
           t1 = System.currentTimeMillis
@@ -697,7 +653,7 @@ object DS_SimJoin_stream{
 
           
           cogroupedRDD.unpersist()
-          cachedIRDD.unpersist()
+          //cachedIRDD.unpersist()
           missedRDD.unpersist()
           rdd.unpersist()
           DB_PRDD.unpersist()
