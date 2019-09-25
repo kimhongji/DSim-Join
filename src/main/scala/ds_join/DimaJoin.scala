@@ -14,16 +14,20 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
 
-//import com.mongodb.casbah.Imports.MongoConnection
-//import com.mongodb.casbah.Imports.MongoDBObject
-//import com.mongodb.casbah.Imports.MongoClient
-
 import scala.collection.mutable.{ArrayBuffer, Map}
 
 import com.mongodb.spark._
 import com.mongodb.spark.config._
 
 import org.apache.spark.sql.SparkSession
+
+import scala.concurrent.{Await, Future}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+import scala.collection.mutable
+import scala.util.{Failure, Success}
+
+
 
 
 case class IPartition(partitionId: Int,
@@ -90,10 +94,8 @@ object DimaJoin{
       val range = group.filter(
         x => (x._1 <= ss.length && x._2 >= ss.length)
       )
-      //println(s"createInverse: " + ss1.toString+" / "+  range.length.toString+" /END")
       val sl = range(range.length-1)._1
       val H = CalculateH1(sl, threshold)
-      //println(s"createInverse: H: " + H.toString)
 
       for (i <- 1 until H + 1) yield {
         val s = ss.filter(x => {segNum(x, H) == i})
@@ -543,8 +545,8 @@ object DimaJoin{
 
 	def main(
             sc : org.apache.spark.SparkContext, 
-            //data: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))], 
-            data: org.apache.spark.rdd.RDD[IPartition],
+            data: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))], 
+            //data: org.apache.spark.rdd.RDD[IPartition],
             query: org.apache.spark.rdd.RDD[(String, String)],
             //query: org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))],
             frequencyTable: Broadcast[scala.collection.Map[(Int, Boolean), Long]],
@@ -700,7 +702,7 @@ object DimaJoin{
  	/* input random value */
     
    /*
-    val index = data
+    
 
     val f = index
       .map(x => {
@@ -714,147 +716,148 @@ object DimaJoin{
     val frequencyTable = sc.broadcast(f.collectAsMap())
 
     var partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)
-   
-    val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
+*/ 
 
-    val indexed = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-      val data = iter.toArray
-      val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, numPartitions)
-      Array(IPartition(partitionId, index, data
-        .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-          createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
-        .map(x => {
-          if (x._1.length > 0) {
-            (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-          } else {
-            (Array[Int](), Array[Boolean]())
-          }
-        })), x._2._2)))).iterator
-      }).persist(StorageLevel.MEMORY_AND_DISK_SER)
-    indexed.count
-
-    var indexRDD = indexed
-*/
-
-    val indexRDD = data    //cached
-    val queryRDD = query  //stream
-
-    /* 
-
-    FOR INDEX DATA RDD
-
-    */
-  /* 
-
-  FOR QUERY DATA RDD
-
-  */
-  var startTime_2 = System.currentTimeMillis();
-
-
-  var mini_start_1 = System.currentTimeMillis();
-
-  
-   val query_rdd = queryRDD
-       .map(x => (sortByValue(x._1), x._2))
-      // .distinct
-      .map(x => ((x._1.hashCode, x._2, x._1),
-        partition_r(
-          x._1, frequencyTable, partitionTable, minimum, multiGroup,
-          threshold, alpha, numPartitions, topDegree
-        )))
-      .flatMapValues(x => x)
-      .map(x => {
-        ((x._1._1, x._1._2, x._2._1), x._2._2)
-      })
-      .flatMapValues(x => x)
-      .map(x => {
-        (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
-      })
-      
-
-   var mini_end_1 = System.currentTimeMillis();
 
     def Has(x : Int, array: Array[Int]): Boolean = {
       for (i <- array) {
         if (x == i) {
-          return true
-        }
+           return true
+         }
+       }
+     false
+    }  
+
+    val index = data
+    val queryRDD = query  //stream
+
+    var indexRDD:org.apache.spark.rdd.RDD[IPartition] = null
+    var query_rdd_partitioned:ds_join.SimilarityRDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
+    var maxPartitionId:org.apache.spark.broadcast.Broadcast[Array[Int]] = null
+    var query_rdd:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
+
+    var indexfuture =  Future{
+        var t0 = System.currentTimeMillis();
+        println("indexbuild future")
+
+        val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
+
+        indexRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
+         val data = iter.toArray
+         val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, numPartitions)
+         Array(IPartition(partitionId, index, data
+           .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
+              createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
+            .map(x => {
+              if (x._1.length > 0) {
+                (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
+              } else {
+                (Array[Int](), Array[Boolean]())
+              }
+            })), x._2._2)))).iterator
+          }, preservesPartitioning=true).cache()    
+
+        var t1 = System.currentTimeMillis();
+        println(" --time|2-0|Dima build indexRDD()): " + (t1 - t0) + " ms")
+
+        indexRDD
       }
-      false
-    }
 
-    
 
-    val partitionLoad = query_rdd
-      .mapPartitions({iter =>
-        Array(distribute.clone()).iterator
-      })
-      .collect
-      .reduce((a, b) => {
-        val r = ArrayBuffer[Long]()
-        for (i <- 0 until numPartitions) {
-          r += (a(i) + b(i))
-        }
-        r.toArray.map(x => (x/numPartitions) * 8)
-      })
 
-    var max_id:Long = 0
-    val maxPartitionId = sc.broadcast({
-      val result = ArrayBuffer[Int]()
-      for (l <- 0 until partitionNumToBeSent) {
-        var max = 0.toLong
-        var in = -1
-        for (i <- 0 until numPartitions) {
-          if (!Has(i, result.toArray) && partitionLoad(i) > max) {
-            max = partitionLoad(i)
-            in = i
+
+    /* 
+
+    FOR QUERY DATA RDD
+
+    */
+    var queryfuture = Future{
+        var startTime_2 = System.currentTimeMillis();
+        println("querybuild")
+
+        query_rdd = queryRDD
+          .map(x => (sortByValue(x._1), x._2))
+          .map(x => ((x._1.hashCode, x._2, x._1),
+             partition_r(
+              x._1, frequencyTable, partitionTable, minimum, multiGroup,
+             threshold, alpha, numPartitions, topDegree
+            )))
+          .flatMapValues(x => x)
+          .map(x => {
+            ((x._1._1, x._1._2, x._2._1), x._2._2)
+          })
+         .flatMapValues(x => x)
+         .map(x => {
+            (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
+          })
+       
+
+      val partitionLoad = query_rdd
+       .mapPartitions({iter =>
+         Array(distribute.clone()).iterator
+       })
+       .collect
+       .reduce((a, b) => {
+         val r = ArrayBuffer[Long]()
+         for (i <- 0 until numPartitions) {
+            r += (a(i) + b(i))
           }
-        }
-        result += in
-      }
-      result.toArray
-    }) // dfd
+         r.toArray.map(x => (x/numPartitions) * 8)
+       })
 
-    //println("max : "+maxPartitionId.value.mkString(","))
-    var endTime_2 = System.currentTimeMillis();
+      var max_id:Long = 0
+      maxPartitionId = sc.broadcast({
+         val result = ArrayBuffer[Int]()
+         for (l <- 0 until partitionNumToBeSent) {
+             var max = 0.toLong
+             var in = -1
+             for (i <- 0 until numPartitions) {
+                if (!Has(i, result.toArray) && partitionLoad(i) > max) {
+                  max = partitionLoad(i)
+                 in = i
+               }
+             }
+           result += in
+         }
+        result.toArray
+       })  
+
+     query_rdd_partitioned = new SimilarityRDD(
+       query_rdd.partitionBy(
+            new SimilarityQueryPartitioner(
+              numPartitions, partitionTable, frequencyTable, maxPartitionId.value)
+         ), true
+     ).cache()
+
+     var endTime_2 = System.currentTimeMillis();
+     println(" --time|2-0|Dima build queryrdd()): " + (endTime_2 - startTime_2) + " ms")
+
+     (query_rdd_partitioned, maxPartitionId)
+     }
+
+    var resultfuture = for{
+      x <- indexfuture
+      y <- queryfuture
+    }yield (x,y)
+
+    resultfuture.onComplete{
+      case Success(ans) => println("success")
+    }
+    var awaited1 = Await.result(resultfuture, scala.concurrent.duration.Duration.Inf)
+    //var awaited2 = Await.result(missfuture, scala.concurrent.duration.Duration.Inf)
 
     var mini_start_2 = System.currentTimeMillis();
-
-
     val extraIndex = sc.broadcast(
       indexRDD.mapPartitionsWithIndex((Index, iter) => {
         Array((Index, iter.toArray)).iterator
-      }).filter(x => Has(x._1, maxPartitionId.value))
+      }, preservesPartitioning = true)
+        .filter(x => Has(x._1, maxPartitionId.value))
         .map(x => x._2)
         .collect())
-  
-
-    //var extra_count = extraIndex2.count()
-
-    var mini_end_2 = System.currentTimeMillis()
-
-    val query_rdd_partitioned = new SimilarityRDD(
-      query_rdd.partitionBy(
-          new SimilarityQueryPartitioner(
-             numPartitions, partitionTable, frequencyTable, maxPartitionId.value)
-        ), true
-    ).cache()
-    
-   
+    var mini_end_2 = System.currentTimeMillis()    
 
     /* INDEX x QUERY */
-    /*
-    println("\n===>  indexRDD")
-    for(e <- indexRDD) {
-     println(s"\n - partitonID : "+e._1 + "\n - Index : "+e._2 + "\n - raw_hashcode : "+ e._3(0)._1._1 + "\n  - raw data : "+e._3(0)._1._2 +"\n  - signature token(only string) hashcode : "+e._3(0)._1._3(0)._1.mkString(" ") +"\n  - signature token(only string) hashcode : "+e._3(0)._1._3(1)._1.mkString(" ") +"\n - bool : "+e._3(0)._2)
-    }
 
-    println("===>  query_rdd_partitioned")
-    for(e <- query_rdd_partitioned){
-     println(s"\n[signature hashcode : "+e._1+"]" + "\n - IsDel : "+e._2._2 +"\n - IsTwo : "+e._2._3.mkString(" ") + "\n - IsExtend : "+e._2._4 + "\n - segNUm : "+e._2._5 +"\n - raw_hashcode : "+e._2._1._1 + "\n    - raw data : "+e._2._1._2 + "\n    - partition_r_records_code(signature token hashcode) : "+e._2._1._3(0)._1.mkString(" ") + "\n    - partition_r_records_bool : "+e._2._1._3(0)._2.mkString(" ") + "\n    - partition_r_records_code(signature token hashcode) : "+e._2._1._3(1)._1.mkString(" ") + "\n    - partition_r_records_bool : "+e._2._1._3(1)._2.mkString(" "))
-    }
-    */
 
     // for saving answer, compareList 
 
@@ -864,7 +867,6 @@ object DimaJoin{
    var startTime_1 = System.currentTimeMillis();
     val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
       (leftIter, rightIter) => {
-        //println(s"zipPartitions")
         val index = rightIter.next
         val index2 = extraIndex.value // origin : extraIndex.value  , new : extraIndex
         var countNum:Double = 0.0
@@ -903,7 +905,6 @@ object DimaJoin{
               }
             }
             if (compareSimilarity(q._2, data)) {
-              //println(s"ans+=Tuple3 : (" + q._2._1._1 +" , " +q._2._1._2 + ", " + data._1._2 + " )")
               ans += Tuple3(q._2._1._2.hashCode(), q._2._1._2, data._1._2) // or q._2._1._2.hashCode()
             }
           }
@@ -911,7 +912,6 @@ object DimaJoin{
         //ans.map(x => new JoinedRow(x._2, x._1)).iterator
         
         ans.map(x => {
-          //println(s"====> zipPartitions : ( query code : " + x._1 + " query : "+ x._2 + " ///// data : " + x._3 + " )")
           (x._1, x._3) //  queryhashcode, data
         }).iterator
       }
@@ -921,6 +921,7 @@ object DimaJoin{
     var endTime_1 = System.currentTimeMillis();
 
 
+    indexRDD.unpersist()
     query_rdd_partitioned.unpersist()
    
     //println(" -time|2|Dima-queryZipPartition_up(exclusive extraIndex): " + (endTime_2 - startTime_2) + " ms")

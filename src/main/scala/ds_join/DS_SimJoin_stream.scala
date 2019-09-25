@@ -356,41 +356,14 @@ object DS_SimJoin_stream{
                           iter.foreach(q =>
                             qlist_map ::= q._1.toInt
                           )
-                          var pquery = qlist_map.partition(_%2 ==0)
-                          var query1 = in("signature", pquery._1:_*)
-                          var query2 = in("signature", pquery._2:_*)
-                          var temp1 = collection.find(query1)
-                          var temp2 = collection.find(query2)
-                          /*
-                          var temp:Future[Array[(Int, ((String, String), Boolean))]] = Future{
-                            var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
-                            var re1 = collection.find(query1)
-                            for(data <- re1){
-                              dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
-                            }
-                            dbData
-                          } //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
-                          var temp2:Future[Array[(Int, ((String, String), Boolean))]] = Future{
-                            var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
-                            var re2 = collection.find(query2)
-                            for(data <- re2){
-                              dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
-                            }
-                            dbData
-                          } //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
-                          */
-                          var awaited = Await.result(temp1.toFuture, scala.concurrent.duration.Duration.Inf)
-                          var awaited2 = Await.result(temp2.toFuture, scala.concurrent.duration.Duration.Inf)
+                          var query = in("signature", qlist_map:_*)
+                          var temp = collection.find(query) //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
+                          
+                          var awaited = Await.result(temp.toFuture, scala.concurrent.duration.Duration.Inf)
 
                           for(data <- awaited){
                             dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
-                          }  
-                          for(data <- awaited2){
-                            dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
-                          }  
-
-
-
+                          }                         
                         }
                         client.close()
                         
@@ -623,7 +596,6 @@ object DS_SimJoin_stream{
 
           //hitThread.start()
           t0 = System.currentTimeMillis
-          //val n2 =Await.result(hitFuture, scala.concurrent.duration.Duration.Inf)
           val n =Await.result(missedFuture, scala.concurrent.duration.Duration.Inf)
           t1 = System.currentTimeMillis
           //hitThread.join()
