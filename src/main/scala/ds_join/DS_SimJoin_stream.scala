@@ -168,6 +168,7 @@ object DS_SimJoin_stream{
       var cachedDataCount:Long = 0
       var query_count:Long = 0
       var hit_sum:Long = 0
+      var hitdimacount:Long = 0
 
 
       val data_num = args(0).toString
@@ -233,7 +234,7 @@ object DS_SimJoin_stream{
 
           var input_file = sqlContext.read.json(rdd)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.rdd
-          queryRDD = rows.map( x => (x(1).toString, x(1).toString)).filter(s => !s._1.isEmpty)
+          queryRDD = rows.map( x => (x(1).toString, x(1).toString)).filter(s => !s._1.isEmpty).partitionBy(hashP)
           val query_hashRDD = queryRDD.map(x => (x._1.hashCode(), x._1))
           query_count = queryRDD.count()
 
@@ -265,7 +266,7 @@ object DS_SimJoin_stream{
              
          //    val hitThread = new Thread(){
          //       override def run = {
-                 
+                  var t2 = System.currentTimeMillis
                   hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
                     .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
                     .partitionBy(hashP) //add partitionby
@@ -278,14 +279,14 @@ object DS_SimJoin_stream{
            //   }//end thread
            //   hitThread.start()
            //   hitThread.join()
-
-                var t2 = System.currentTimeMillis
+                var t3 = System.currentTimeMillis
+                
                 hit_dima_PRDD = DimaJoin.main(sc, hitcache, hitquery , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
                 
                 hit_dima_RDD = hit_dima_PRDD._1.partitionBy(hashP)
                 sc = hit_dima_PRDD._2 
 
-                val hitdimacount = hit_dima_RDD.count()
+                hitdimacount = hit_dima_RDD.count()
 
                 //println(s"\n\n\n===> hitedRDD")
                 //hitedRDD.collect().foreach(println)// randmom
@@ -293,7 +294,7 @@ object DS_SimJoin_stream{
                 hitquery.unpersist()
                 hitcache.unpersist() 
 
-                var t3 = System.currentTimeMillis
+               
                  
                 hit_sum = hit_sum + hitdimacount
                 println("data|hc|hitdata dima(string) : "+hitdimacount)
@@ -605,7 +606,7 @@ object DS_SimJoin_stream{
           /* union (hitedRDD, joinedRDD_missed) */
           t0 = System.currentTimeMillis
           if(isEmpty_missedData){
-            outputCount = hitedRDD.count //origin hitedRDD.count
+            outputCount = hitdimacount //origin hitedRDD.count
           }else{
             var righthitedRDD = hit_dima_RDD
             

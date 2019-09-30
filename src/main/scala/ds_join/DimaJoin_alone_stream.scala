@@ -692,7 +692,6 @@ object DimaJoin_alone_stream{
     val data_num = args(0).toString
     val coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_"+data_num
     println("index coll: "+coll_name)
-    println("query coll: mongodb://192.168.0.11:27017/REVIEW.musical_100")
 
     //index collection
     val readConfig = ReadConfig(Map(
@@ -701,19 +700,19 @@ object DimaJoin_alone_stream{
       ))
 
     //query collection
-    val query_readConfig = ReadConfig(Map(
+  /*  val query_readConfig = ReadConfig(Map(
       "spark.mongodb.input.uri" -> "mongodb://192.168.0.11:27017/REVIEW.musical_100", 
       "spark.mongodb.input.readPreference.name" -> "primaryPreferred" 
       ))
-
+*/
     val load = MongoSpark.load(sc,readConfig)
     val preRDD = load.map( x => x.getString("reviewText"))
     val dataRDD = preRDD.map(x => (x,x))
 
-    val query_load = MongoSpark.load(sc,query_readConfig)
+   /* val query_load = MongoSpark.load(sc,query_readConfig)
     val query_preRDD = query_load.map( x => x.getString("reviewText"))
     //val queryRDD = query_preRDD.map(x => (x,x))
-
+*/
     /* 
 
     FOR INDEX DATA RDD
@@ -730,7 +729,9 @@ object DimaJoin_alone_stream{
           var input_file = sqlContext.read.json(query)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.rdd
           val queryRDD = rows.map( x => (x(1).toString, x(1).toString)).filter(s => !s._1.isEmpty)
+          val query_count = queryRDD.count()
 
+          println("data|qc|query_count : " + query_count)
             //val queryRDD = query.map(x => (x,x))
 
             val tStart1 = System.currentTimeMillis
@@ -779,6 +780,7 @@ object DimaJoin_alone_stream{
               })
 
             val index = deletionIndexSig.union(segIndexSig).persist(StorageLevel.DISK_ONLY)
+
 
             val f = index
               .map(x => {
@@ -855,14 +857,14 @@ object DimaJoin_alone_stream{
 
             val partitionLoad = query_rdd
               .mapPartitions({iter =>
-                println("ooooing?22")
+                //println("ooooing?22")
                 //println("distr : "+distribute.mkString(","))
                 Array(distribute.clone()).iterator
               }).collect().reduce((a, b) => {
-                println("ooooing?")
+                //println("ooooing?")
                 val r = ArrayBuffer[Long]()
                 for (i <- 0 until numPartitions) {
-                  println("a(i)"+a(i).toString+",  b(i)"+b(i).toString)
+                  //println("a(i)"+a(i).toString+",  b(i)"+b(i).toString)
                   r += (a(i) + b(i))
                 }
                 r.toArray.map(x => (x/numPartitions) * 8) // for to integer?

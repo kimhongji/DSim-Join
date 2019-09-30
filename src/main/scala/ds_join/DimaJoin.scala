@@ -736,9 +736,9 @@ object DimaJoin{
     var maxPartitionId:org.apache.spark.broadcast.Broadcast[Array[Int]] = null
     var query_rdd:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
 
-    var indexfuture =  Future{
+  //  var indexfuture =  Future{
         var t0 = System.currentTimeMillis();
-        println("indexbuild future")
+       // println("indexbuild start")
 
         val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
 
@@ -758,23 +758,18 @@ object DimaJoin{
           }, preservesPartitioning=true).cache()    
 
         var t1 = System.currentTimeMillis();
-        println(" --time|2-0|Dima build indexRDD()): " + (t1 - t0) + " ms")
-
-        indexRDD
-      }
-
-
-
+       // println("indexbuild end")
+  //      indexRDD
+  //    }
 
     /* 
 
     FOR QUERY DATA RDD
 
     */
-    var queryfuture = Future{
-        var startTime_2 = System.currentTimeMillis();
-        println("querybuild")
-
+   // var queryfuture = Future{
+       // println("querybuild start")
+ 
         query_rdd = queryRDD
           .map(x => (sortByValue(x._1), x._2))
           .map(x => ((x._1.hashCode, x._2, x._1),
@@ -789,13 +784,13 @@ object DimaJoin{
          .flatMapValues(x => x)
          .map(x => {
             (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
-          })
+          }).partitionBy(hashP).cache()
        
 
       val partitionLoad = query_rdd
        .mapPartitions({iter =>
          Array(distribute.clone()).iterator
-       })
+       },preservesPartitioning=true)
        .collect
        .reduce((a, b) => {
          val r = ArrayBuffer[Long]()
@@ -805,7 +800,6 @@ object DimaJoin{
          r.toArray.map(x => (x/numPartitions) * 8)
        })
 
-      var max_id:Long = 0
       maxPartitionId = sc.broadcast({
          val result = ArrayBuffer[Int]()
          for (l <- 0 until partitionNumToBeSent) {
@@ -829,9 +823,8 @@ object DimaJoin{
          ), true
      ).cache()
 
-     var endTime_2 = System.currentTimeMillis();
-     println(" --time|2-0|Dima build queryrdd()): " + (endTime_2 - startTime_2) + " ms")
-
+     //println("querybuild end") 
+/*
      (query_rdd_partitioned, maxPartitionId)
      }
 
@@ -841,20 +834,18 @@ object DimaJoin{
     }yield (x,y)
 
     resultfuture.onComplete{
-      case Success(ans) => println("success")
+      case Failure(ans) => println("Failure")
     }
-    var awaited1 = Await.result(resultfuture, scala.concurrent.duration.Duration.Inf)
-    //var awaited2 = Await.result(missfuture, scala.concurrent.duration.Duration.Inf)
 
-    var mini_start_2 = System.currentTimeMillis();
+    var awaited1 = Await.result(resultfuture, scala.concurrent.duration.Duration.Inf)
+*/
     val extraIndex = sc.broadcast(
       indexRDD.mapPartitionsWithIndex((Index, iter) => {
         Array((Index, iter.toArray)).iterator
       }, preservesPartitioning = true)
         .filter(x => Has(x._1, maxPartitionId.value))
         .map(x => x._2)
-        .collect())
-    var mini_end_2 = System.currentTimeMillis()    
+        .collect())   
 
     /* INDEX x QUERY */
 
@@ -923,12 +914,8 @@ object DimaJoin{
 
     indexRDD.unpersist()
     query_rdd_partitioned.unpersist()
+    query_rdd.unpersist()
    
-    //println(" -time|2|Dima-queryZipPartition_up(exclusive extraIndex): " + (endTime_2 - startTime_2) + " ms")
-    //println(" --time|2|Dima-queryZipPartition_up_up(build queryrdd): " + (mini_end_1 - mini_start_1) + " ms")
-    println(" --time|2|Dima-queryZipPartition_up_down_(extraIndex): " + (mini_end_2 - mini_start_2) + " ms")
-    //println(" --time|2|Dima-queryZipPartition_up_down_(extra take): " + (mini_end_3 - mini_start_3) + " ms")
-    //println(" -time|2|Dima-queryZipPartition_down_(zipPartition): " + (endTime_1 - startTime_1) + " ms")
     final_result
     }
 
