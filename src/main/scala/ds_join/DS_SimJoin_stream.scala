@@ -169,6 +169,7 @@ object DS_SimJoin_stream{
       var query_count:Long = 0
       var hit_sum:Long = 0
       var hitdimacount:Long = 0
+      var inputKeysRDD_count:Long = 0
 
 
       val data_num = args(0).toString
@@ -259,7 +260,6 @@ object DS_SimJoin_stream{
           var t1 = System.currentTimeMillis
 
           println("time|1|first cogroup (query-cached): " + (t1 - t0) + " ms")
-          //currCogTime = t1 - t0
 
           /* hit data join thread */
           //val hitFuture = Future{
@@ -279,12 +279,14 @@ object DS_SimJoin_stream{
            //   }//end thread
            //   hitThread.start()
            //   hitThread.join()
-                var t3 = System.currentTimeMillis
+               
                 
                 hit_dima_PRDD = DimaJoin.main(sc, hitcache, hitquery , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
                 
                 hit_dima_RDD = hit_dima_PRDD._1.partitionBy(hashP)
                 sc = hit_dima_PRDD._2 
+
+                hit_dima_RDD.localCheckpoint
 
                 hitdimacount = hit_dima_RDD.count()
 
@@ -293,13 +295,14 @@ object DS_SimJoin_stream{
 
                 hitquery.unpersist()
                 hitcache.unpersist() 
+                
+                var t3 = System.currentTimeMillis
+                currCogTime = t3 - t2
 
-               
-                 
                 hit_sum = hit_sum + hitdimacount
                 println("data|hc|hitdata dima(string) : "+hitdimacount)
                 println("time|3|hit dima time(currCogTime): " + (t3 - t2) + " ms")
-                currCogTime = t3 - t2
+                
            //}//end future
 
 
@@ -344,6 +347,7 @@ object DS_SimJoin_stream{
                   var test_start = System.currentTimeMillis
                 
                   //println(queryIRDD.toDebugString)
+
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
                       var client: MongoClient = MongoClient("mongodb://192.168.0.11:27017")
                       var database: MongoDatabase = client.getDatabase("REVIEW")
@@ -440,7 +444,7 @@ object DS_SimJoin_stream{
                   newPartition
                   }, preservesPartitioning = true)
 
-                var inputKeysRDD_count = inputKeysRDD.count()
+                inputKeysRDD_count = inputKeysRDD.count()
 
                 println("log|bc|inputKeysRDD count: "+inputKeysRDD_count)
                
@@ -485,7 +489,7 @@ object DS_SimJoin_stream{
 
               var pCacheRelatedOpTimeDiff = currCogTime_th - pCogTime + pCacheTime - ppCacheTime
               var pDBTimeDiff = currDBTime_th - pDBTime
-
+              
               println("data|cwb|caching window size: " + cachingWindow_th)
 
               var pAll = currCogTime_th + currDBTime_th + pCacheTime
@@ -493,26 +497,31 @@ object DS_SimJoin_stream{
               var pppAll = ppCogTime + ppDBTime + pppCacheTime
               var isEmpty_missedData_th = isEmpty_missedData
 
+              var query_Count = query_count        // new query count
+              var querysig_Count = inputKeysRDD_count // new query sig count
+              var DB_Count = DB_count                 // after query 
+              var cache_Count =  cachedDataCount      // before update
+              var hit_Count = hitdimacount            // hit count (actually)
+              var k = 1
+
               //start load balancing
-              if(isEmpty_missedData_th){
-                cachingWindow_th += 1
-                sCachingWindow = cachingWindow_th
-              }else if(streamingIteration_th > 3){ // 5 is random value 
-                 if(pAll > ppAll){
-                     cachingWindow_th = sCachingWindow
+              if(streamingIteration_th > 3){ // 5 is random value
+                  if( DB_Count > query_Count * 80 || DB_Count < query_Count * 20) k = 2
+                  else k = 1 
 
-                 }else if(pAll < ppAll){
-                     sCachingWindow = cachingWindow_th
+                  if( hitdimacount < query_Count * 0.5){
+                      cachingWindow_th += k  
 
-                     if(currDBTime > currCogTime + pCacheTime ){
-                        cachingWindow_th += 1   
+                  }else if( hitdimacount > query_Count * 0.7 ){
+                      cachingWindow_th -= k    
+                  }
 
-                     }else if(currDBTime < currCogTime + pCacheTime && cachingWindow_th > 1){
-                        cachingWindow_th -= 1     
-                     }             
-                }
+                  if(cachingWindow_th < 0){
+                      cachingWindow_th = 1
+                  }
+
               }else{
-                cachingWindow_th += 1
+                cachingWindow_th += k
                 sCachingWindow = cachingWindow_th
               }
 
@@ -541,6 +550,8 @@ object DS_SimJoin_stream{
               var enableCacheCleaningFunction_th = enableCacheCleaningFunction
               var streamingIteration_th = streamingIteration
               var isEmpty_missedData_th = isEmpty_missedData
+
+              RemoveListThread.join()
 
               var t0 = System.currentTimeMillis
 
