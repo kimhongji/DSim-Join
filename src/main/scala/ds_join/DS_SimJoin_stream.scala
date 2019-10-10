@@ -50,7 +50,7 @@ object DS_SimJoin_stream{
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
       val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
-      val stream = ssc.socketTextStream("192.168.0.11", 9999)
+      val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
       var partition_num:Int = 4
@@ -174,7 +174,7 @@ object DS_SimJoin_stream{
 
       val data_num = args(0).toString
       val db_coll_name = "musical_sig"+data_num
-      val coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_"+data_num 
+      val coll_name = "mongodb://192.168.0.15:27017/REVIEW.musical_"+data_num 
       val cache_name = "../ref/review_data/Musical_Instruments_sig100.json"   
       var qlist = List[Int]()
 
@@ -349,7 +349,7 @@ object DS_SimJoin_stream{
                   //println(queryIRDD.toDebugString)
 
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
-                      var client: MongoClient = MongoClient("mongodb://192.168.0.11:27017")
+                      var client: MongoClient = MongoClient("mongodb://192.168.0.15:27017")
                       var database: MongoDatabase = client.getDatabase("REVIEW")
                       var collection: MongoCollection[Document] = database.getCollection(db_coll_name) 
                       
@@ -506,7 +506,7 @@ object DS_SimJoin_stream{
 
               //start load balancing
               if(streamingIteration_th > 3){ // 5 is random value
-                  if( DB_Count > query_Count * 80 || DB_Count < query_Count * 20) k = 2
+                  if( DB_Count > query_Count * 80 || DB_Count < query_Count * 20 ) k = 2
                   else k = 1 
 
                   if( hitdimacount < query_Count * 0.5){
