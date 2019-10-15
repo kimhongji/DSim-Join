@@ -32,11 +32,11 @@ import scala.util.{Failure, Success}
 
 case class IPartition(partitionId: Int,
                       index: Index,
-                      data: Array[((Int,String, Array[(Array[Int], Array[Boolean])]),	Boolean)])
+                      data: Array[((Int,String, Array[(Array[Int], Array[Boolean])]), Boolean)])
 
 /* ===================================
 sbt clean assembly
-		Main object 
+    Main object 
 ../Dima-master/bin/spark-submit --class ds_join.DimaJoin --master local[4] ./target/scala-2.10/dima-ds_2.10-1.0.jar > log
 ../Dima-master/bin/spark-submit --class ds_join.DimaJoin --master local[4] ./target/scala-2.10/Dima-DS-assembly-1.0.jar > log
 ../spark-2.2.3-bin-hadoop2.6/bin/spark-submit --class ds_join.DimaJoin --master local[4] --conf "spark.mongodb.input.uri=mongodb://127.0.0.1/REVIEW.musical?readPreference=primaryPreferred" ./target/scala-2.11/Dima-DS-assembly-1.0.jar 
@@ -543,7 +543,7 @@ object DimaJoin{
   }
   
 
-	def main(
+  def main(
             sc : org.apache.spark.SparkContext, 
             data: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))], 
             //data: org.apache.spark.rdd.RDD[IPartition],
@@ -699,7 +699,7 @@ object DimaJoin{
  /*============= Main function ===============*/
   def buildIndex():org.apache.spark.rdd.RDD[(Int, String)] = {
 
- 	/* input random value */
+  /* input random value */
     
    /*
     
@@ -786,7 +786,7 @@ object DimaJoin{
             (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
           }).partitionBy(hashP).cache()
        
-
+/*
       val partitionLoad = query_rdd
        .mapPartitions({iter =>
          Array(distribute.clone()).iterator
@@ -815,11 +815,13 @@ object DimaJoin{
          }
         result.toArray
        })  
+      */
 
+     var max_temp = Array(0)
      query_rdd_partitioned = new SimilarityRDD(
        query_rdd.partitionBy(
             new SimilarityQueryPartitioner(
-              numPartitions, partitionTable, frequencyTable, maxPartitionId.value)
+              numPartitions, partitionTable, frequencyTable, max_temp)
          ), true
      ).cache()
 
@@ -839,14 +841,14 @@ object DimaJoin{
 
     var awaited1 = Await.result(resultfuture, scala.concurrent.duration.Duration.Inf)
 */
-    val extraIndex = sc.broadcast(
+    /*val extraIndex = sc.broadcast(
       indexRDD.mapPartitionsWithIndex((Index, iter) => {
         Array((Index, iter.toArray)).iterator
       }, preservesPartitioning = true)
         .filter(x => Has(x._1, maxPartitionId.value))
         .map(x => x._2)
-        .collect())   
-
+        //.collect())   
+*/
     /* INDEX x QUERY */
 
 
@@ -859,41 +861,21 @@ object DimaJoin{
     val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
       (leftIter, rightIter) => {
         val index = rightIter.next
-        val index2 = extraIndex.value // origin : extraIndex.value  , new : extraIndex
+        //val index2 = extraIndex.value // origin : extraIndex.value  , new : extraIndex
         var countNum:Double = 0.0
         var pId = 0
         val partitionId = index.partitionId
-        var IPartition_temp:IPartition = null
         while (leftIter.hasNext) {
 
           val q = leftIter.next
           val positionOfQ = partitionTable.value.getOrElse(q._1, hashStrategy(q._1))
           val (candidate, whichIndex) = {
-            if (positionOfQ != partitionId) {
-              var (c, w) = (List[Int](), -1)
-              var goon = true
-              var i = 0 // default 0 
 
-              while (goon && i < index2.length) { //extra_count <== index2.length //start
-                  if (index2(i)(0).partitionId == positionOfQ) {
-                  c = index2(i)(0).index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-                  w = i
-                  goon = false
-                }
-                i += 1
-              }//end                          
-              (c, w)
-            } else {
               (index.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List()), -1)
-            }
           }
           for (i <- candidate) {
             val data = {
-              if (whichIndex < 0 ) {
                 index.data(i)
-              } else {
-                index2(whichIndex)(0).data(i)
-              }
             }
             if (compareSimilarity(q._2, data)) {
               ans += Tuple3(q._2._1._2.hashCode(), q._2._1._2, data._1._2) // or q._2._1._2.hashCode()
