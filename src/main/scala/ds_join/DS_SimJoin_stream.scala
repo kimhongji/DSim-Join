@@ -173,9 +173,10 @@ object DS_SimJoin_stream{
 
 
       val data_num = args(0).toString
+      //val db_coll_name = "Musical_Sig"+data_num
       val db_coll_name = "musical_sig"+data_num
       val coll_name = "mongodb://192.168.0.15:27017/REVIEW.musical_"+data_num 
-      val cache_name = "../ref/review_data/Musical_Instruments_sig100.json"   
+      val cache_name = "/home/user/Desktop/hongji/ref/review_data/Musical_Instruments_sig100.json"   
       var qlist = List[Int]()
 
       //change mongospark version = 2.2.6  to 2.1.0
@@ -347,10 +348,11 @@ object DS_SimJoin_stream{
                   var test_start = System.currentTimeMillis
                 
                   //println(queryIRDD.toDebugString)
-
+                  queryIRDD.coalesce(partition_num)
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
                       var client: MongoClient = MongoClient("mongodb://192.168.0.15:27017")
                       var database: MongoDatabase = client.getDatabase("REVIEW")
+                      //var database: MongoDatabase = client.getDatabase("musical")
                       var collection: MongoCollection[Document] = database.getCollection(db_coll_name) 
                       
                       var qlist_map = qlist
@@ -524,6 +526,7 @@ object DS_SimJoin_stream{
                 cachingWindow_th += k
                 sCachingWindow = cachingWindow_th
               }
+              //end load balancing
 
               println("data|cwa|caching window size: " + cachingWindow_th)
 
