@@ -350,8 +350,8 @@ object DS_SimJoin_stream{
                   //println(queryIRDD.toDebugString)
                   queryIRDD.coalesce(partition_num)
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
-                      var client: MongoClient = MongoClient("mongodb://192.168.0.15:27017")
-                      var database: MongoDatabase = client.getDatabase("REVIEW")
+                      var client: MongoClient = MongoClient("mongodb://192.168.0.10:27017")
+                      var database: MongoDatabase = client.getDatabase("musical")
                       //var database: MongoDatabase = client.getDatabase("musical")
                       var collection: MongoCollection[Document] = database.getCollection(db_coll_name) 
                       
