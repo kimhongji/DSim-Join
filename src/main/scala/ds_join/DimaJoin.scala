@@ -736,39 +736,34 @@ object DimaJoin{
     var maxPartitionId:org.apache.spark.broadcast.Broadcast[Array[Int]] = null
     var query_rdd:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
 
-  //  var indexfuture =  Future{
-        var t0 = System.currentTimeMillis();
-       // println("indexbuild start")
+  
+    var t0 = System.currentTimeMillis();
+       
 
-        val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
-
-        indexRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-         val data = iter.toArray
-         val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, numPartitions)
-         Array(IPartition(partitionId, index, data
-           .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-              createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
-            .map(x => {
-              if (x._1.length > 0) {
-                (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-              } else {
-                (Array[Int](), Array[Boolean]())
-              }
-            })), x._2._2)))).iterator
-          }, preservesPartitioning=true).cache()    
-
-        var t1 = System.currentTimeMillis();
-       // println("indexbuild end")
-  //      indexRDD
-  //    }
+    val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
+    //println("partitionedRDD.partitioner: "+partitionedRDD.partitioner)//SimilarityHashPartitioner
+    indexRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
+      val data = iter.toArray
+      val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, numPartitions)
+      Array(IPartition(partitionId, index, data
+        .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
+           createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
+        .map(x => {
+          if (x._1.length > 0) {
+             (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
+           } else {
+            (Array[Int](), Array[Boolean]())
+           }
+         })), x._2._2)))).iterator
+      }, preservesPartitioning=true).cache()    
+     //println("indexRDD.partitioner: "+indexRDD.partitioner)//SimilarityHashPartitioner
+     var t1 = System.currentTimeMillis();
 
     /* 
 
     FOR QUERY DATA RDD
 
     */
-   // var queryfuture = Future{
-       // println("querybuild start")
  
         query_rdd = queryRDD
           .map(x => (sortByValue(x._1), x._2))
@@ -785,39 +780,9 @@ object DimaJoin{
          .map(x => {
             (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
           }).partitionBy(hashP).cache()
-       
-/*
-      val partitionLoad = query_rdd
-       .mapPartitions({iter =>
-         Array(distribute.clone()).iterator
-       },preservesPartitioning=true)
-       .collect
-       .reduce((a, b) => {
-         val r = ArrayBuffer[Long]()
-         for (i <- 0 until numPartitions) {
-            r += (a(i) + b(i))
-          }
-         r.toArray.map(x => (x/numPartitions) * 8)
-       })
 
-      maxPartitionId = sc.broadcast({
-         val result = ArrayBuffer[Int]()
-         for (l <- 0 until partitionNumToBeSent) {
-             var max = 0.toLong
-             var in = -1
-             for (i <- 0 until numPartitions) {
-                if (!Has(i, result.toArray) && partitionLoad(i) > max) {
-                  max = partitionLoad(i)
-                 in = i
-               }
-             }
-           result += in
-         }
-        result.toArray
-       })  
-      */
 
-     var max_temp = Array(0)
+     var max_temp = Array(-1)
      query_rdd_partitioned = new SimilarityRDD(
        query_rdd.partitionBy(
             new SimilarityQueryPartitioner(
@@ -825,30 +790,6 @@ object DimaJoin{
          ), true
      ).cache()
 
-     //println("querybuild end") 
-/*
-     (query_rdd_partitioned, maxPartitionId)
-     }
-
-    var resultfuture = for{
-      x <- indexfuture
-      y <- queryfuture
-    }yield (x,y)
-
-    resultfuture.onComplete{
-      case Failure(ans) => println("Failure")
-    }
-
-    var awaited1 = Await.result(resultfuture, scala.concurrent.duration.Duration.Inf)
-*/
-    /*val extraIndex = sc.broadcast(
-      indexRDD.mapPartitionsWithIndex((Index, iter) => {
-        Array((Index, iter.toArray)).iterator
-      }, preservesPartitioning = true)
-        .filter(x => Has(x._1, maxPartitionId.value))
-        .map(x => x._2)
-        //.collect())   
-*/
     /* INDEX x QUERY */
 
 
@@ -856,23 +797,15 @@ object DimaJoin{
 
     var ans = mutable.ListBuffer[(Int, String, String)]()
     var comList= mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)  , ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)) ]()
-
+  //println("query_rdd_partitioned.partitioner: "+query_rdd_partitioned.partitioner) // SimilarityQueryPartitioner
+  //println("indexRDD.partitioner: "+indexRDD.partitioner)  //SimilarityHashPartitioner
    var startTime_1 = System.currentTimeMillis();
     val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
       (leftIter, rightIter) => {
         val index = rightIter.next
-        //val index2 = extraIndex.value // origin : extraIndex.value  , new : extraIndex
-        var countNum:Double = 0.0
-        var pId = 0
-        val partitionId = index.partitionId
         while (leftIter.hasNext) {
-
           val q = leftIter.next
-          val positionOfQ = partitionTable.value.getOrElse(q._1, hashStrategy(q._1))
-          val (candidate, whichIndex) = {
-
-              (index.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List()), -1)
-          }
+          val candidate = index.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
           for (i <- candidate) {
             val data = {
                 index.data(i)
@@ -881,9 +814,7 @@ object DimaJoin{
               ans += Tuple3(q._2._1._2.hashCode(), q._2._1._2, data._1._2) // or q._2._1._2.hashCode()
             }
           }
-        }
-        //ans.map(x => new JoinedRow(x._2, x._1)).iterator
-        
+        }        
         ans.map(x => {
           (x._1, x._3) //  queryhashcode, data
         }).iterator

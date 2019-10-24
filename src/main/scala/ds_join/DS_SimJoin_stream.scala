@@ -167,10 +167,22 @@ object DS_SimJoin_stream{
       var cachedPRDDDataCount:Long = 0
       var cachedDataCount:Long = 0
       var query_count:Long = 0
-      var hit_sum:Long = 0
       var hitdimacount:Long = 0
       var inputKeysRDD_count:Long = 0
 
+      var hit_sum:Long = 0
+      var query_sum:Long = 0
+      var cogroup_query_cache_sum:Long = 0
+      var hit_dima_sum:Long = 0
+      var inputKeysRDD_sum:Long = 0
+      var LRU_sum:Long = 0
+      var DB_get_sum:Long = 0
+      var query_mapParition_sum:Long = 0
+      var cwa_sum:Long = 0
+      var miss_dima_sum:Long = 0
+      var cached_sum:Long = 0
+      var cache_time_sum:Long = 0
+      var latency_sum:Long = 0
 
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
@@ -206,9 +218,7 @@ object DS_SimJoin_stream{
       var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = cache_file.rdd
       cachedPRDD = rows.map( x => (x(3).asInstanceOf[Long].intValue(),((x(0).toString,x(2).toString),x(1).toString.toBoolean)))
       cachedPRDD = cachedPRDD.partitionBy(hashP).cache()
-
-      //println(s"\n\n\n===> cachedPRDD")
-      //cachedPRDD.collect().foreach(println)      // randmom                
+            
       
       /* build LRU_RDD using index(cache) data */
       if(enableCacheCleaningFunction){
@@ -241,8 +251,10 @@ object DS_SimJoin_stream{
           query_count = queryRDD.count()
 
           println("data|qc|query_count : " + query_count)
+          query_sum = query_sum + query_count
 
           var t0 = System.currentTimeMillis
+
 
           queryForIndex = queryRDD.map(x => (DimaJoin.sortByValue(x._1), x._2))
                    .map(x => ((x._1.hashCode, x._2, x._1),
@@ -255,33 +267,32 @@ object DS_SimJoin_stream{
                 .flatMapValues(x => x)
                 .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).cache() //x._2._1 => sig  
 
+          queryForIndex = queryForIndex.partitionBy(hashP); // new 10/22 // doesn't affect
+          //cachedPRDD = cachedPRDD.partitionBy(hashP);
+          //println("queryForIndex.partitioner: "+queryForIndex.partitioner) //Hash
+          //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //None
           cogroupedRDD = queryForIndex.cogroup(cachedPRDD).filter(s => (!s._2._1.isEmpty)).cache() // DATA FORMAT !!!!
                  
           
           var t1 = System.currentTimeMillis
 
-          println("time|1|first cogroup (query-cached): " + (t1 - t0) + " ms")
+          println("time|1|cogroup(query ,cache): " + (t1 - t0) + " ms")
+          cogroup_query_cache_sum = cogroup_query_cache_sum + t1 - t0
 
           /* hit data join thread */
-          //val hitFuture = Future{
-             
-         //    val hitThread = new Thread(){
-         //       override def run = {
-                  var t2 = System.currentTimeMillis
-                  hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
-                    .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
-                    .partitionBy(hashP) //add partitionby
 
-                  hitedRDD.cache()
+                var t2 = System.currentTimeMillis
+                hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
+                  .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
+                  .partitionBy(hashP) //add partitionby
 
-                  hitquery = hitedRDD.map(x => (x._2._1._1._2, x._2._1._1._2)).distinct().cache()      //query index (signature) ( string, string )
-                  hitcache= hitedRDD.map(x => (x._1, x._2._2)).cache()  //cache index (signature)
-           //     }//end thread run
-           //   }//end thread
-           //   hitThread.start()
-           //   hitThread.join()
+                hitedRDD.cache()
+
+                hitquery = hitedRDD.map(x => (x._2._1._1._2, x._2._1._1._2)).distinct().cache()      //query index (signature) ( string, string )
+                hitcache= hitedRDD.map(x => (x._1, x._2._2)).cache()  //cache index (signature)
                
-                
+                //println("hitquery.partitioner: "+hitquery.partitioner) None
+                //println("hitcache.partitioner: "+hitcache.partitioner) None
                 hit_dima_PRDD = DimaJoin.main(sc, hitcache, hitquery , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
                 
                 hit_dima_RDD = hit_dima_PRDD._1.partitionBy(hashP)
@@ -300,9 +311,10 @@ object DS_SimJoin_stream{
                 var t3 = System.currentTimeMillis
                 currCogTime = t3 - t2
 
-                hit_sum = hit_sum + hitdimacount
                 println("data|hc|hitdata dima(string) : "+hitdimacount)
                 println("time|3|hit dima time(currCogTime): " + (t3 - t2) + " ms")
+                hit_sum = hit_sum + hitdimacount
+                hit_dima_sum = hit_dima_sum + t3 - t2
                 
            //}//end future
 
@@ -312,7 +324,8 @@ object DS_SimJoin_stream{
 
               var t0 = System.currentTimeMillis
               var missedRDDThread: Thread = null
-
+              //println("query_hashRDD.partitioner: "+query_hashRDD.partitioner) //None
+              //println("hit_dima_RDD.partitioner: "+hit_dima_RDD.partitioner)  //Hash
               missedRDD = query_hashRDD.subtractByKey(hit_dima_RDD, hashP).cache()
               
               missedRDDThread = new Thread(){
@@ -324,7 +337,7 @@ object DS_SimJoin_stream{
                                               .subtractByKey(hit_dima_RDD, hashP)
                                               .map(x => (x._2)).cache()
 
-                      queryIRDD.localCheckpoint
+                      //queryIRDD.localCheckpoint
 
                       println("data|mc|missedKeys count: " + missedKeysCount)
                   }
@@ -344,33 +357,43 @@ object DS_SimJoin_stream{
 
                   /*build query signature*/             
 
-                  t0 = System.currentTimeMillis 
-                  var test_start = System.currentTimeMillis
-                
-                  //println(queryIRDD.toDebugString)
-                  queryIRDD.coalesce(partition_num)
+                  t0 = System.currentTimeMillis
+                  
+                  queryIRDD = queryIRDD.partitionBy(hashP)
+                  //println("queryIRDD.partitioner: "+queryIRDD.partitioner) //HashPartitioner
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
-                      var client: MongoClient = MongoClient("mongodb://192.168.0.10:27017")
+                      var client: MongoClient = MongoClient("mongodb://192.168.0.10:27017") //mongos server
                       var database: MongoDatabase = client.getDatabase("musical")
                       //var database: MongoDatabase = client.getDatabase("musical")
                       var collection: MongoCollection[Document] = database.getCollection(db_coll_name) 
-                      
+                     
                       var qlist_map = qlist
                       var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
                       
                         if(!iter.isEmpty){
 
+                          var t0 = System.currentTimeMillis
                           iter.foreach(q =>
                             qlist_map ::= q._1.toInt
                           )
+                          var t1 = System.currentTimeMillis
+                          println("time|4-0|qlist_map time : " + (t1 - t0) + " ms ")
+
                           var query = in("signature", qlist_map:_*)
                           var temp = collection.find(query) //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
                           
+                          t0 = System.currentTimeMillis
                           var awaited = Await.result(temp.toFuture, scala.concurrent.duration.Duration.Inf)
+                          t1 = System.currentTimeMillis
 
+                          println("time|4-1|awaited time : " + (t1 - t0) + " ms ")
+
+                          t0 = System.currentTimeMillis
                           for(data <- awaited){
                             dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
-                          }                         
+                          }
+                          t1 = System.currentTimeMillis    
+                          println("time|4-2|dbData time : " + (t1 - t0) + " ms")                     
                         }
                         client.close()
                         
@@ -379,47 +402,41 @@ object DS_SimJoin_stream{
                         
                    }, preservesPartitioning = true)
 
+                  //println("DB_PRDD.partitioner: "+DB_PRDD.partitioner) //Hash
                   DB_PRDD = DB_PRDD.distinct().cache()
                   DB_count = DB_PRDD.count()
-                  println("data|dc|DB get count: " + DB_count )
-
-                  var test_end = System.currentTimeMillis
-                  println("time|4-0|miss query_mapPartition: " + (test_end - test_start) + " ms")
-                 
-                  //println(s"**===> DB_PRDD")
-                  //DB_PRDD.collect().foreach(println)                  
+                  println("data|dc|DB get count: " + DB_count ) 
+                  DB_get_sum = DB_get_sum + DB_count              
 
                   t1 = System.currentTimeMillis
 
                   println("time|4|query_mapPartition & cache_buildIndex data(currDBTime): " + (t1 - t0) + " ms")
                   currDBTime = t1 - t0 
+                  query_mapParition_sum = query_mapParition_sum + currDBTime
 
                   RemoveListThread.start
 
-
                   /* join missed data */
-                  t0 = System.currentTimeMillis                  
-
+                  t0 = System.currentTimeMillis   
+                  //println("DB_PRDD.partitioner: "+DB_PRDD.partitioner) //None
+                  //println("missedIPRDD.partitioner: "+missedIPRDD.partitioner) //None
                   joinedPRDD_missed_total = DimaJoin.main(sc, DB_PRDD, missedIPRDD , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
-                  //original DB_IRDD
-
+              
                   joinedPRDD_missed = joinedPRDD_missed_total._1.partitionBy(hashP).cache()
                   sc = joinedPRDD_missed_total._2
 
                   joinedPRDD_missed.localCheckpoint
 
                   var joinedPRDD_missed_count = joinedPRDD_missed.count()
-                  println("data|jm|joined_miss count: " + joinedPRDD_missed_count)
+                  println("data|jm|joined_miss count: " + joinedPRDD_missed_count)      
 
-                  //println(s"\n\n\n===> joinedPRDD_missed")
-                  //joinedPRDD_missed.collect().foreach(println)      // randmom              
-
-                 // miss_cogroupedRDD.unpersist()
+                  // miss_cogroupedRDD.unpersist()
                   missedIPRDD.unpersist()
                   queryIRDD.unpersist()
 
                   t1 = System.currentTimeMillis
-                  println("time|5|second dimajoin (DB_IRDD, missedIPRDD) " + (t1 - t0) + " ms")
+                  println("time|5|miss dimajoin (DB_IRDD, missedIPRDD) " + (t1 - t0) + " ms")
+                  miss_dima_sum = miss_dima_sum + t1 - t0
                   
             
              } 
@@ -449,7 +466,9 @@ object DS_SimJoin_stream{
                 inputKeysRDD_count = inputKeysRDD.count()
 
                 println("log|bc|inputKeysRDD count: "+inputKeysRDD_count)
+                inputKeysRDD_sum = inputKeysRDD_sum + inputKeysRDD_count
                
+                //println("inputKeysRDD.partitoner"+inputKeysRDD.partitioner) //hash
                 if(isPerformed_CC_PrevIter){
                   LRU_Tmp = LRU_RDD.filter(s => s._2 >= threshold_prev)
                                    .subtractByKey(inputKeysRDD, hashP) // update and insert new cache data
@@ -472,6 +491,7 @@ object DS_SimJoin_stream{
 
                 var t1 = System.currentTimeMillis
                 println("time|9|LRU keys update time: " + (t1 - t0) + " ms")
+                LRU_sum = LRU_sum + t1 - t0
               }
           } //LRUKeyThread END
 
@@ -529,6 +549,7 @@ object DS_SimJoin_stream{
               //end load balancing
 
               println("data|cwa|caching window size: " + cachingWindow_th)
+              cwa_sum = cwa_sum + cachingWindow_th
 
               var threshold_curr = streamingIteration_th - cachingWindow_th // n-c cache window size inc -> threshod dec -> 
 
@@ -580,14 +601,15 @@ object DS_SimJoin_stream{
                
               cachedDataCount = cacheTmp.cache().count() // check cache cout
               globalCacheCount = cachedDataCount
-              println("data|c|cachedData(after union) 2: " + cachedDataCount)  
+              println("data|c|cached count(after union): " + cachedDataCount)  
+              cached_sum = cached_sum + cachedDataCount
                     
               cachedPRDD.unpersist()
               cachedPRDD = cacheTmp
              
               var t1 = System.currentTimeMillis
               println("time|6|create cachedPRDD(currCacheTime): " + (t1 - t0) + " ms")
-            
+              cache_time_sum = cache_time_sum + currCacheTime           
               currCacheTime = t1 - t0
 
             }
@@ -596,7 +618,7 @@ object DS_SimJoin_stream{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streamingIteration > 1000 )   ssc.stop()
+              if(streaming_data_all > 2000 )   ssc.stop()
             }
           }// EndCondition END
 
@@ -633,14 +655,9 @@ object DS_SimJoin_stream{
           t1 = System.currentTimeMillis
           println("time|7|union output data: " + (t1 - t0) + " ms") 
 
-
-          CacheThread.join()
-
-          streamingIteration = streamingIteration + 1
-
+          CacheThread.join()  
           
           cogroupedRDD.unpersist()
-          //cachedIRDD.unpersist()
           missedRDD.unpersist()
           rdd.unpersist()
           DB_PRDD.unpersist()
@@ -649,17 +666,10 @@ object DS_SimJoin_stream{
 
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
-          println("time|8|stream: " + currStreamTime + " ms")
-          AvgStream +:= currStreamTime
-          var sum:Long = 0
-          for(i <- AvgStream){
-            sum = sum + i
-          }
+          println("time|8|latency: " + currStreamTime + " ms")
+          latency_sum = latency_sum + currStreamTime
 
-          var as = sum/AvgStream.length
-          println("data|hs|hit sum: " + hit_sum)
-          println("data|as|average stream: " + as + " ms "+AvgStream.length)
-
+          streamingIteration = streamingIteration + 1
 
           pppCogTime = ppCogTime
           ppCogTime = pCogTime
@@ -690,14 +700,38 @@ object DS_SimJoin_stream{
           println("data|all|streaming data all: " + streaming_data_all)
 
 
-
           if(!isEmpty_missedData){
             joinedPRDD_missed.unpersist()
           }
-        }//if(rdd.isempty) end
+        }
       })
 
       ssc.start()
       ssc.awaitTermination()
+
+      println("\n\n======Streaming average log=====\n")
+      println("> total streaming iteration : "+streamingIteration)
+      println("data|query_sum: " + query_sum/streamingIteration)
+      println("time|cogroup_query_cache_sum: "+cogroup_query_cache_sum/streamingIteration+" ms")   
+      println("data|hit sum: " + hit_sum/streamingIteration)
+      println("time|hit_dima_sum: "+hit_dima_sum/streamingIteration+" ms")
+      println("data|inputKeysRDD_sum: " + inputKeysRDD_sum/streamingIteration)
+      println("time|LRU_sum: "+LRU_sum/streamingIteration+" ms")
+      println("data|DB_get_sum: " + DB_get_sum/streamingIteration)
+      println("time|query_mapParition_sum: "+query_mapParition_sum/streamingIteration+" ms")
+      println("data|cwa_sum: " + cwa_sum/streamingIteration)
+      println("time|miss_dima_sum: "+miss_dima_sum/streamingIteration+" ms")
+      println("data|cached_sum: " + cached_sum/streamingIteration)
+      println("time|cache_time_sum: "+cache_time_sum/streamingIteration+" ms")
+      println("time|latency_sum: "+latency_sum/streamingIteration+" ms")
+      println("data|streaming data all: " + streaming_data_all)
+      println("\n=================================\n")
+
+      
+
+
+
     }
+
+
  }
