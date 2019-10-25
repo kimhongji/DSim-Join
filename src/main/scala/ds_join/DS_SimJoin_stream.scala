@@ -49,7 +49,7 @@ object DS_SimJoin_stream{
       var conf = new SparkConf().setAppName("DS_SimJoin_stream")
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
-      val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
+      val ssc = new StreamingContext(sc, Milliseconds(2500)) // 700
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
@@ -183,6 +183,7 @@ object DS_SimJoin_stream{
       var cached_sum:Long = 0
       var cache_time_sum:Long = 0
       var latency_sum:Long = 0
+      var union_sum:Long = 0
 
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
@@ -266,13 +267,13 @@ object DS_SimJoin_stream{
                 .map(x => { ((x._1._1, x._1._2, x._2._1), x._2._2)})
                 .flatMapValues(x => x)
                 .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).cache() //x._2._1 => sig  
-
+          
           queryForIndex = queryForIndex.partitionBy(hashP); // new 10/22 // doesn't affect
           //cachedPRDD = cachedPRDD.partitionBy(hashP);
           //println("queryForIndex.partitioner: "+queryForIndex.partitioner) //Hash
           //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //None
           cogroupedRDD = queryForIndex.cogroup(cachedPRDD).filter(s => (!s._2._1.isEmpty)).cache() // DATA FORMAT !!!!
-                 
+          cogroupedRDD.count      
           
           var t1 = System.currentTimeMillis
 
@@ -330,16 +331,20 @@ object DS_SimJoin_stream{
               
               missedRDDThread = new Thread(){
                   override def run = {
+                    var t0 = System.currentTimeMillis
                       missedIPRDD = missedRDD.map(x => (x._2, x._2)).cache()
-                      missedKeysCount = missedIPRDD.count()
+                      //missedKeysCount = missedIPRDD.count()
 
                       queryIRDD = queryForIndex.map(x => (x._2._2.hashCode(), x))
                                               .subtractByKey(hit_dima_RDD, hashP)
                                               .map(x => (x._2)).cache()
 
+                      queryIRDD.count
+                     var t1 = System.currentTimeMillis
+                     println("time|missedRDDThread time : " + (t1 - t0) + " ms ")
                       //queryIRDD.localCheckpoint
 
-                      println("data|mc|missedKeys count: " + missedKeysCount)
+                      //println("data|mc|missedKeys count: " + missedKeysCount)
                   }
               }
 
@@ -359,6 +364,7 @@ object DS_SimJoin_stream{
 
                   t0 = System.currentTimeMillis
                   
+                  //queryIRDD.localCheckpoint
                   queryIRDD = queryIRDD.partitionBy(hashP)
                   //println("queryIRDD.partitioner: "+queryIRDD.partitioner) //HashPartitioner
                   DB_PRDD = queryIRDD.mapPartitions({ iter =>
@@ -401,6 +407,7 @@ object DS_SimJoin_stream{
                         db_arr.iterator
                         
                    }, preservesPartitioning = true)
+                  
 
                   //println("DB_PRDD.partitioner: "+DB_PRDD.partitioner) //Hash
                   DB_PRDD = DB_PRDD.distinct().cache()
@@ -424,13 +431,12 @@ object DS_SimJoin_stream{
               
                   joinedPRDD_missed = joinedPRDD_missed_total._1.partitionBy(hashP).cache()
                   sc = joinedPRDD_missed_total._2
-
+                  
                   joinedPRDD_missed.localCheckpoint
 
                   var joinedPRDD_missed_count = joinedPRDD_missed.count()
                   println("data|jm|joined_miss count: " + joinedPRDD_missed_count)      
 
-                  // miss_cogroupedRDD.unpersist()
                   missedIPRDD.unpersist()
                   queryIRDD.unpersist()
 
@@ -463,9 +469,9 @@ object DS_SimJoin_stream{
                   newPartition
                   }, preservesPartitioning = true)
 
-                inputKeysRDD_count = inputKeysRDD.count()
+                //inputKeysRDD_count = inputKeysRDD.count()
 
-                println("log|bc|inputKeysRDD count: "+inputKeysRDD_count)
+                //println("log|bc|inputKeysRDD count: "+inputKeysRDD_count)
                 inputKeysRDD_sum = inputKeysRDD_sum + inputKeysRDD_count
                
                 //println("inputKeysRDD.partitoner"+inputKeysRDD.partitioner) //hash
@@ -555,8 +561,8 @@ object DS_SimJoin_stream{
 
               LRUKeyThread.join()
               removeList = LRU_RDD.filter({ s =>  s._2 < threshold_curr  })
-              var removeList_count = removeList.count()
-              println("data|rc|removeList_count: " + removeList_count)
+              //var removeList_count = removeList.count()
+              //println("data|rc|removeList_count: " + removeList_count)
 
               this.synchronized{
                 cachingWindow = cachingWindow_th
@@ -599,13 +605,14 @@ object DS_SimJoin_stream{
               cacheTmp = cacheTmp.distinct()
 
                
-              cachedDataCount = cacheTmp.cache().count() // check cache cout
-              globalCacheCount = cachedDataCount
+              cachedDataCount = cacheTmp.count // check cache cout
+              //globalCacheCount = cachedDataCount
               println("data|c|cached count(after union): " + cachedDataCount)  
               cached_sum = cached_sum + cachedDataCount
                     
               cachedPRDD.unpersist()
               cachedPRDD = cacheTmp
+              cachedPRDD.cache()
              
               var t1 = System.currentTimeMillis
               println("time|6|create cachedPRDD(currCacheTime): " + (t1 - t0) + " ms")
@@ -653,7 +660,8 @@ object DS_SimJoin_stream{
           }
           println("data|out|output data: " + outputCount)       
           t1 = System.currentTimeMillis
-          println("time|7|union output data: " + (t1 - t0) + " ms") 
+          println("time|7|union output time: " + (t1 - t0) + " ms") 
+          union_sum = union_sum + t1 - t0
 
           CacheThread.join()  
           
@@ -663,6 +671,7 @@ object DS_SimJoin_stream{
           DB_PRDD.unpersist()
           queryForIndex.unpersist()
           hitedRDD.unpersist()
+
 
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
@@ -723,6 +732,7 @@ object DS_SimJoin_stream{
       println("time|miss_dima_sum: "+miss_dima_sum/streamingIteration+" ms")
       println("data|cached_sum: " + cached_sum/streamingIteration)
       println("time|cache_time_sum: "+cache_time_sum/streamingIteration+" ms")
+      println("time|union_sum: "+union_sum/streamingIteration+" ms")
       println("time|latency_sum: "+latency_sum/streamingIteration+" ms")
       println("data|streaming data all: " + streaming_data_all)
       println("\n=================================\n")
