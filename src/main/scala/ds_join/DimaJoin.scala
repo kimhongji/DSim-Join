@@ -110,6 +110,36 @@ object DimaJoin{
     }.toArray
   }
 
+  def createInverseForquery(ss1: String,
+                                 group: Array[(Int, Int)],
+                                 threshold: Double
+                                ): Array[(String, Int, Int)] = {
+    {
+      val ss = ss1.split(" ").filter(x => x.length > 0)
+      val s = ss.size
+      val range = group
+        .filter(x => {
+          x._1 <= Math.floor(s / threshold).toInt && x._2 >= (Math.ceil(threshold * s) + 0.0001).toInt
+        })
+      val sl = range(range.length -1)._1
+      
+      val H = CalculateH1(sl, threshold)
+
+        val substring = {
+          for (i <- 1 until H + 1) yield {
+            val p = ss.filter(x => segNum(x, H) == i)
+            if (p.length == 0) {
+              Tuple3("", i, sl)
+            } else if(p.length == 1){ 
+              Tuple3(p(0), i, sl)
+            }else {
+              Tuple3(p.reduce(_ + " " + _), i, sl)
+            }
+          }
+        }
+        substring
+      }.toArray
+  }
 
   def createDeletion(ss1: String): Array[String] = {
     {
@@ -574,11 +604,11 @@ object DimaJoin{
   //var conf = new SparkConf().setAppName("DimaJoin")
   //var sc = new SparkContext(conf)
 
-  //startTime_2 = System.currentTimeMillis();
+  startTime_2 = System.currentTimeMillis();
   dimajoined = buildIndex()
-  //endTime_2 = System.currentTimeMillis();
+  endTime_2 = System.currentTimeMillis();
 
-  //println("time|2|Dima-queryZipPartition: " + (endTime_2 - startTime_2) + " ms")
+  //println("time|2|Dima-buildIndex: " + (endTime_2 - startTime_2) + " ms")
 
   //est_2 = endTime_2 - startTime_2
   //println("After indexing : " + est_2/1000000000.0)
@@ -665,18 +695,7 @@ object DimaJoin{
     query: ((Int, String, Array[(Array[Int], Array[Boolean])])
       , Boolean, Array[Boolean], Boolean, Int),
     index: ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)): Boolean = {
-    /*println(s"compare { ${query._1._2} } and " +
-      s"{ ${index._1._2}}")
-    println(s"isDeletionIndex: ${index._2}, isDeletionQuery: ${query._2}, val" +
-      s"ue: ${
-        if (query._3.length == 0) {
-          0
-        } else if (!query._3(0)) {
-          1
-        } else {
-          2
-        }
-      }")*/
+
     val pos = query._5
     val query_length = query._1._3
       .map(x => x._1.length)
@@ -739,7 +758,9 @@ object DimaJoin{
   
     var t0 = System.currentTimeMillis();
        
-
+    //println("in DIMA index  : " +index.partitioner)
+    //println("in DIMA queryRDD  : " +queryRDD.partitioner)
+    //val partitionedRDD = index.partitionBy(hashP)
     val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
     //println("partitionedRDD.partitioner: "+partitionedRDD.partitioner)//SimilarityHashPartitioner
     indexRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
@@ -779,28 +800,31 @@ object DimaJoin{
          .flatMapValues(x => x)
          .map(x => {
             (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
-          }).partitionBy(hashP).cache()
+          }).cache()
 
 
      var max_temp = Array(-1)
      query_rdd_partitioned = new SimilarityRDD(
        query_rdd.partitionBy(
-            new SimilarityQueryPartitioner(
-              numPartitions, partitionTable, frequencyTable, max_temp)
+            //hashP
+            new SimilarityQueryPartitioner(numPartitions, partitionTable, frequencyTable, max_temp)
          ), true
      ).cache()
 
     /* INDEX x QUERY */
 
-
+  //  query_rdd_partitioned.collect()
     // for saving answer, compareList 
 
+    var t_map = System.currentTimeMillis
+
+    var cand_ans = mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean))]()
     var ans = mutable.ListBuffer[(Int, String, String)]()
-    var comList= mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)  , ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)) ]()
-  //println("query_rdd_partitioned.partitioner: "+query_rdd_partitioned.partitioner) // SimilarityQueryPartitioner
-  //println("indexRDD.partitioner: "+indexRDD.partitioner)  //SimilarityHashPartitioner
+    var comList= mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)  , ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean))]()
+   //println("query_rdd_partitioned.partitioner: "+query_rdd_partitioned.partitioner) // SimilarityQueryPartitioner
+   //println("indexRDD.partitioner: "+indexRDD.partitioner)  //SimilarityHashPartitioner
    var startTime_1 = System.currentTimeMillis();
-    val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
+    val final_result_p = query_rdd_partitioned.zipPartitions(indexRDD, true) {
       (leftIter, rightIter) => {
         val index = rightIter.next
         while (leftIter.hasNext) {
@@ -813,6 +837,7 @@ object DimaJoin{
             if (compareSimilarity(q._2, data)) {
               ans += Tuple3(q._2._1._2.hashCode(), q._2._1._2, data._1._2) // or q._2._1._2.hashCode()
             }
+            //  cand_ans += Tuple2(q._2, data)
           }
         }        
         ans.map(x => {
@@ -820,8 +845,35 @@ object DimaJoin{
         }).iterator
       }
     }//.cache()
-
-
+   // final_result_p.collect()
+     var t_map2 = System.currentTimeMillis
+   //  println("zipPartiton : " + (t_map2-t_map) + " ms")
+    /*
+    //val fp_count = final_result_p.count
+    //final_result_p.collect().foreach(x => println(x._1._1._3.mkString(",")+",  "+x._2._1._3.mkString(",")))// array(), array()
+    //println(fp_count)
+    //val final_result_p_d = final_result_p.distinct() // distinct rate count!!!
+     //val fp_count_d = final_result_p_d.count
+    //println(fp_count_d)
+    //final_result_p.collect().foreach(println)
+    
+    var final_result = final_result_p.mapPartitions({ iter => 
+     
+      while(iter.hasNext){
+          val q = iter.next
+         //println("query1 : "+q._1)
+          //println("daata2 : "+q._2) 
+         if(compareSimilarity(q._1, q._2)){
+          ans += Tuple3(q._1._1._2.hashCode(), q._1._1._2, q._2._1._2) // or q._2._1._2.hashCode()
+          }     
+      }
+      ans.map(x => {
+        (x._1, x._3)
+      }).iterator        
+    })
+    
+    //final_result.collect().foreach(println)
+   */
     var endTime_1 = System.currentTimeMillis();
 
 
@@ -829,7 +881,7 @@ object DimaJoin{
     query_rdd_partitioned.unpersist()
     query_rdd.unpersist()
    
-    final_result
+    final_result_p
     }
 
     (dimajoined, sc)
