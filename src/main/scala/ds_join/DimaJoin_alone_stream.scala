@@ -1,1005 +1,388 @@
 package ds_join
 
+import com.mongodb.spark._
+import com.mongodb.spark.config._
+import com.mongodb.spark.sql._
+import org.mongodb.scala._
+import org.mongodb.scala.Document._
+import org.mongodb.scala.model.Aggregates._
+import org.mongodb.scala.model.Filters._
+import org.mongodb.scala.bson._
+
+//import org.bson.Document
+
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.SQLContext
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.rdd.RDD
+import org.apache.spark.streaming._
 import org.apache.spark.Partitioner
 import org.apache.spark.HashPartitioner
 import org.apache.spark.RangePartitioner
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.{Partition, TaskContext}
-import org.apache.spark.streaming._
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.rdd.RDD
 
+import scala.concurrent.{Await, Future}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
-import scala.reflect.ClassTag
 
 
-import scala.collection.mutable.{ArrayBuffer, Map}
+/*Complile*/
+/*
+1. for shell : ./bin/spark-shell --conf "spark.mongodb.input.uri=mongodb://127.0.0.1/REVIEPreferred"\
+--packages org.mongodb.spark:mongo-spark-connector_2.11:2.1.0 /home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar
 
-import com.mongodb.spark._
-import com.mongodb.spark.config._
+./bin/spark-shell --packages org.mongodb.scala:mongo-scala-driver_2.11:2.0.0 org.mongodb.scala:mongo-scala-bson_2.11:2.0.0 org.mongodb:bson.0.0/home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar
 
-import org.apache.spark.sql.SparkSession
+2. for submit : ./bin/spark-submit --class ds_join.DS_SimJoin_stream --master $master /home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar $num 
+
+*/
 
 
-
-/* ===================================
-sbt clean assembly
-    Main object 
-../Dima-master/bin/spark-submit --class ds_join.DimaJoin --master local[4] ./target/scala-2.10/dima-ds_2.10-1.0.jar > log
-../Dima-master/bin/spark-submit --class ds_join.DimaJoin --master local[4] ./target/scala-2.10/Dima-DS-assembly-1.0.jar > log
-../spark-2.2.3-bin-hadoop2.6/bin/spark-submit --class ds_join.DimaJoin --master local[4] --conf "spark.mongodb.input.uri=mongodb://127.0.0.1/REVIEW.musical?readPreference=primaryPreferred" ./target/scala-2.11/Dima-DS-assembly-1.0.jar 
-../spark-2.2.3-bin-hadoop2.6/bin/spark-submit --class ds_join.DimaJoin --master local[4] --conf "spark.mongodb.input.uri=mongodb://127.0.0.1/REVIEW.musical?readPreference=primaryPreferred" --executor-memory 4G --driver-memory 1G ./target/scala-2.11/Dima-DS-assembly-1.0.jar
-../spark-2.2.3-bin-hadoop2.6/bin/spark-submit --class ds_join.DimaJoin --master spark://dsl-desktop:7077 ./target/scala-2.11/Dima-DS-assembly-1.0.jar
-
-===================================*/
+/*check it is partitioner right?*/
 object DimaJoin_alone_stream{
 
   def main(args: Array[String]){
+      
+      /*Initialize variable*/
+      var conf = new SparkConf().setAppName("DimaJoin_alone_stream")
+      var sc = new SparkContext(conf)
+      var sqlContext = new SQLContext(sc)
+      val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
+      val stream = ssc.socketTextStream("192.168.0.15", 9999)
+      var AvgStream:Array[Long] = Array()
 
-  val table_name = "table-name"
-  val index_name = "index-name"
-  val numPartitions = 4
-  val threshold:Double = 0.8
-  val alpha = 0.95
-  val topDegree = 0
-  val abandonNum = 2
-  val weight = 0
-  var partitionNumToBeSent = 1
-  var startTime_2:Double = 0
-  var endTime_2:Double = 0
-  var est_2:Double = 0
+      var partition_num:Int = 4
+      val threshold:Double = 0.8  // threshold!!!!!!!
+      val alpha = 0.95
+      var minimum:Int = 0
+      var topDegree = 0
+      var hashP = new HashPartitioner(partition_num)
+      var streamingIteration = 1
 
+      var cachingWindow = 1
+      var pCachingWindow = 1
+      var ppCachingWindow = 1
+      var pppCachingWindow = 1
+      var sCachingWindow = 1
+      var sCachingWindow_pre = 1
+      var sCachingWindow_preTime: Long = 0
+      var sCachingWindow_time: Long = 0
+      var alphaValue: Long = 215
+      val checkoutval = 10 //
 
-  var distribute = new Array[Long](2048)
-  var indexDistribute = new Array[Long](2048)
+      var enableCacheCleaningFunction = true
+      var isPerformed_CC_PrevIter = false
 
-  buildIndex()
+      var delCacheTimeList: List[Int] = null
+      var removeList: org.apache.spark.rdd.RDD[(Int, Int)] = null
 
-  def multigroup(mini: Int,
-                 maxi: Int,
-                 threshold: Double,
-                 alpha : Double): Array[(Int, Int)] = {
-    var result = ArrayBuffer[(Int, Int)]()
-    var l = mini
-    while (l <= maxi) {
-      val l1 = Math.floor(l / alpha + 0.0001).toInt
-      result += Tuple2(l, l1)
-      l = l1 + 1
-    }
-    result.toArray
-  }
+      var currCogTime: Long = 0
+      var currCacheTime: Long = 0
+      var currDBTime: Long = 0
+      var currStreamTime: Long = 0
 
-  def CalculateH ( l: Int, s: Int, threshold: Double ) = {
-    Math.floor((1 - threshold) * (l + s) / (1 + threshold) + 0.0001).toInt + 1
-  }
+      var pCogTime: Long = 0
+      var ppCogTime: Long = 0
+      var pppCogTime: Long = 0
 
-  def CalculateH1 ( l: Int, threshold: Double ): Int = {
-    // 生成分段的段数(按照query长度)
-    Math.floor ( (1 - threshold) * l / threshold + 0.0001).toInt + 1
-  }
+      var pCacheTime: Long = 0
+      var ppCacheTime: Long = 0
+      var pppCacheTime: Long = 0
+      var ppppCacheTime: Long = 0
 
-  def segNum(s: String, n: Int): Int = {
-    val hash = s.hashCode % n
-    //println(s"segNum: " + s.toString + " , " + hash.toString)
-    if (hash >= 0) {
-      hash + 1
-    } else {
-      hash + n + 1
-    }
-  }
+      var pDBTime: Long = 0
+      var ppDBTime: Long = 0
+      var pppDBTime: Long = 0
 
-  def createInverse(ss1: String,
-                                 group: Array[(Int, Int)],
-                                 threshold: Double
-                                ): Array[(String, Int, Int)] = {
-    {
-      val ss = ss1.split(" ").filter(x => x.length > 0)
-      val range = group.filter(
-        x => (x._1 <= ss.length && x._2 >= ss.length)
-      )
-      //println(s"createInverse: " + ss1.toString+" / "+  range.length.toString+" /END")
-      val sl = range(range.length-1)._1
-      val H = CalculateH1(sl, threshold)
-      //println(s"createInverse: H: " + H.toString)
+      var pIterationTime: Long = 0
+      var ppIterationTime:Long = 0
+      var pOutputCount: Long = 0
 
-      for (i <- 1 until H + 1) yield {
-        val s = ss.filter(x => {segNum(x, H) == i})
-        if (s.length == 0) {
-          Tuple3("", i, sl)
-        } else if (s.length == 1) {
-          Tuple3(s(0), i, sl)
-        } else {
-          Tuple3(s.reduce(_ + " " + _), i, sl)
-        }
-      }
-    }.toArray
-  }
+      var missedKeysCount: Long = 0
+      var pMissedKeysCount: Long = 0
+      var ppMissedKeysCount: Long = 0
 
+     // var queryRDD:org.apache.spark.rdd.RDD[(String, String)] = null
+      var cacheTmp: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null    // for cache update
 
-  def createDeletion(ss1: String): Array[String] = {
-    {
-      val ss = ss1.split(" ")
-      if (ss.length == 1) {
-        Array("")
-      } else if (ss.length == 2) {
-        Array(ss(0), ss(1))
-      } else {
-        for (s <- 0 until ss.length) yield {
-          Array.concat(ss.slice(0, s), ss.slice(s + 1, ss.length)).reduce(_ + " " + _)
-        }
-      }.toArray
-    }
-  }
+      var LRU_RDD: org.apache.spark.rdd.RDD[(Int, Int)] = null
+      var LRU_Tmp: org.apache.spark.rdd.RDD[(Int, Int)] = null      // for LRUKey update
 
-  
+      var globalCacheCount: Long = 0
 
-  def sort(xs: Array[String]): Array[String] = {
-    if (xs.length <= 1) {
-      xs
-    } else {
-      val pivot = xs(xs.length / 2)
-      Array.concat(
-        sort(xs filter (pivot >)),
-        xs filter (pivot ==),
-        sort(xs filter (pivot <))
-      )
-    }
-  }
+      var streaming_data_all: Int = 0
+      var time_all = 0
 
-  def sortByValue(x: String): String = {
-    sort(x.split(" ")).reduce(_ + " " + _)
-  }
-  
-  def inverseDel(         xi: String,
-                          indexNum: scala.collection.Map[(Int, Boolean), Long],
-                          ii: Int,
-                          ll: Int,
-                          minimum: Int
-                        ): Long = {
-    var total = 0.toLong
-    if (xi.length == 0) {
-      return 0.toLong
-    }
-    for (i <- createDeletion(xi)) {
-      val hash = (i, ii, ll).hashCode()
-      total = total + indexNum.getOrElse((hash, false), 0.toLong)
-    }
-    total
-  }
+      var cachedPRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
+      //var index:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
 
-  def addToMapForInverseDel(
-                                     xi: String,
-                                     indexNum: scala.collection.Map[(Int, Boolean), Long],
-                                     partitionTable: scala.collection.Map[Int, Int],
-                                     ii: Int,
-                                     ll: Int,
-                                     minimum: Int,
-                                     numPartition: Int
-                                   ): Array[(Int, Long)] = {
-    if (xi.length == 0) {
-      return Array[(Int, Long)]()
-    }
-    var result = ArrayBuffer[(Int, Long)]()
-    for (i <- createDeletion(xi)) {
-      val hash = (i, ii, ll).hashCode()
-      val partition = partitionTable.getOrElse(hash, hashStrategy(hash))
-      result += Tuple2(partition, indexNum.getOrElse((hash, false), 0.toLong))
-    }
-    result.toArray
-  }
-
-  def parent(i: Int) = Math.floor(i / 2).toInt
-
-  def left_child(i: Int) = 2 * i
-
-  def right_child(i: Int) = 2 * i + 1
-
-  def compare(x: (Long, Long), y: (Long, Long)): Short = {
-    if (x._1 > y._1) {
-      1
-    } else if (x._1 < y._1) {
-      -1
-    } else {
-      if (x._2 > y._2) {
-        1
-      } else if (x._2 < y._2) {
-        -1
-      } else {
-        0
-      }
-    }
-  }
-
-  def minHeapify(A: Array[(Int, (Long, Long), Int)],
-                         i: Int): Array[(Int, (Long, Long), Int)] = {
-    val l = left_child(i)
-    val r = right_child(i)
-    val AA = A.clone()
-    val smallest = {
-      if (l <= AA.length && compare(AA(l - 1)._2, AA(i - 1)._2) < 0) {
-        if (r <= AA.length && compare(AA(r - 1)._2, AA(l - 1)._2) < 0) {
-          r
-        } else {
-          l
-        }
-      }
-      else {
-        if (r <= AA.length && compare(AA(r - 1)._2, AA(i - 1)._2) < 0) {
-          r
-        } else {
-          i
-        }
-      }
-    }
-    if (smallest != i) {
-      val temp = AA(i - 1)
-      AA(i - 1) = AA(smallest - 1)
-      AA(smallest - 1) = temp
-      minHeapify(AA, smallest)
-    } else {
-      AA
-    }
-  }
-
-  def heapExtractMin(
-                              A: Array[(Int, (Long, Long), Int)]
-                            ): ((Int, (Long, Long), Int), Array[(Int, (Long, Long), Int)]) = {
-    val heapSize = A.length
-    if (heapSize < 1) {
-       println(s"heap underflow")
-    }
-    val AA = A.clone()
-    val min = AA(0)
-    AA(0) = AA(heapSize - 1)
-    Tuple2(min, minHeapify(AA.slice(0, heapSize - 1), 1))
-  }
-
-  def heapIncreaseKey(
-                               A: Array[(Int, (Long, Long), Int)],
-                               i: Int,
-                               key: (Int, (Long, Long), Int)
-                             ): Array[(Int, (Long, Long), Int)] = {
-    if (compare(key._2, A(i - 1)._2) > 0) {
-      println(s"new key is larger than current Key")
-    }
-    val AA = A.clone()
-    AA(i - 1) = key
-    var ii = i
-    while (ii > 1 && compare(AA(parent(ii) - 1)._2, AA(ii - 1)._2) > 0) {
-      val temp = AA(ii - 1)
-      AA(ii - 1) = AA(parent(ii) - 1)
-      AA(parent(ii) - 1) = temp
-      ii = parent(ii)
-    }
-    AA
-  }
-
-  def minHeapInsert(
-                             A: Array[(Int, (Long, Long), Int)],
-                             key: (Int, (Long, Long), Int)
-                           ): Array[(Int, (Long, Long), Int)] = {
-    val AA = Array.concat(A, Array(key).map(x => (x._1, (Long.MaxValue, Long.MaxValue), x._3)))
-    heapIncreaseKey(AA, AA.length, key)
-  }
-
-  def buildMinHeap(
-    A: Array[(Int, (Long, Long), Int)]): Array[(Int, (Long, Long), Int)] = {
-    var AA = A.clone()
-    for (i <- (1 until Math.floor(AA.length / 2).toInt + 1).reverse) {
-      AA = minHeapify(AA, i)
-    }
-    AA
-  }
-
-  def hashStrategy(key: Int): Int = {
-    val code = (key % numPartitions)
-    if (code < 0) {
-      code + numPartitions
-    } else {
-      code
-    }
-  }
-
-
-  def calculateVsl(
-    s: Int,
-    l: Int,
-    indexNum: scala.collection.Map[(Int, Boolean), Long],
-    partitionTable: scala.collection.Map[Int, Int],
-    substring: Array[String],
-    H: Int,
-    minimum: Int,
-    alpha: Double,
-    numPartition: Int,
-    topDegree: Int
-  ): Array[Int] = {
-
-    
-
-    val C0 = {
-      for (i <- 1 until H + 1) yield {
-        0.toLong
-      }
-    }.toArray
-    val C1 = {
-      for (i <- 1 until H + 1) yield {
-        val key = ((substring(i - 1), i, l).hashCode(), false)
-        indexNum.getOrElse(key, 0.toLong)
-      }
-    }.toArray
-    val C2 = {
-      for (i <- 1 until H + 1) yield {
-        val key = ((substring(i - 1), i, l).hashCode(), true)
-        C1(i - 1) +
-          indexNum.getOrElse(key, 0.toLong) +
-          inverseDel(substring(i - 1), indexNum, i, l, minimum)
-      }
-    }.toArray
-
-    var addToDistributeWhen1 = {
-      for (i <- 1 until H + 1) yield {
-        var hash = (substring(i - 1), i, l).hashCode()      
-        var partition = partitionTable.getOrElse(hash, hashStrategy(hash))
-
-        (partition, indexNum.getOrElse((hash, false), 0.toLong))
-      }
-    }.toArray
-
-    //println("addtoprint : "+addToDistributeWhen1.mkString(","))
-
-    var addToDistributeWhen2 = {
-      for (i <- 1 until H + 1) yield {
-        val hash = (substring(i - 1), i, l).hashCode()
-        val partition = partitionTable.getOrElse(hash, hashStrategy(hash))
-        val x = addToMapForInverseDel(substring(i - 1),
-          indexNum,
-          partitionTable,
-          i,
-          l,
-          minimum,
-          numPartition)
-        Array.concat(Array(
-          addToDistributeWhen1(i - 1),
-          (partition, indexNum.getOrElse((hash, true), 0.toLong))
-        ), x)
-      }
-    }.toArray
-
-    var deata_distribute0 = {
-      // 只考虑有变化的reducer的负载
-      for (i <- 0 until H) yield {
-        // 分配到1之后情况比较单一,只有inverseindex 和 inversequery匹配这一种情况,只会对一个reducer产生影响
-        val max = {
-          if (addToDistributeWhen1(i)._2 > 0 && topDegree > 0) {
-            (distribute(addToDistributeWhen1(i)._1) +
-              addToDistributeWhen1(i)._2.toLong) * 0 //weight(0)
-          } else {
-            0.toLong
-          }
-        }
-        max
-      }
-    }.toArray
-
-    var deata_distribute1 = {
-      // 分配到2
-      for (i <- 0 until H) yield {
-        val dis = distribute.slice(0, numPartition).clone()
-        val change = ArrayBuffer[Int]()
-        for (j <- addToDistributeWhen2(i)) {
-          dis(j._1) += j._2.toLong
-          if (j._2 > 0) {
-            change += j._1
-          }
-        }
-        var total = 0.toLong
-        for (ii <- 0 until topDegree) {
-          var max = 0.toLong
-          var maxPos = -1
-          var pos = 0
-          for (c <- change) {
-            if (dis(c) >= max) {
-              max = dis(c)
-              maxPos = pos
-            }
-            pos += 1
-          }
-          if (maxPos >= 0) {
-            change.remove(maxPos)
-            total += max * ii //weight(ii) * max
-          }
-        }
-        total
-      }
-    }.toArray
-
-    var deata0 = {
-      for (i <- 0 until H) yield {
-        Tuple2(deata_distribute0(i), C1(i) - C0(i))
-      }
-    }.toArray
-
-    var deata1 = {
-      for (i <- 0 until H) yield {
-        Tuple2(deata_distribute1(i), C2(i) - C1(i))
-      }
-    }.toArray
-
-    var Hls = CalculateH(Math.floor(l / alpha + 0.0001).toInt, s, threshold)
-
-    var V = {
-      for (i <- 1 until H + 1) yield {
-        0
-      }
-    }.toArray
-
-    var M = buildMinHeap(deata0.zipWithIndex.map(x => (0, x._1, x._2)))
-
-    for (j <- 1 until Hls + 1) {
-      val MM = heapExtractMin(M)
-      M = MM._2
-      val pair = MM._1
-      V(pair._3) += 1
-      if (V(pair._3) == 1) {
-        M = minHeapInsert(M, Tuple3(1, deata1(pair._3), pair._3))
-      }
-    }
-
-    for (chooseid <- 0 until H) {
-      if (V(chooseid) == 1) {
-        distribute(addToDistributeWhen1(chooseid)._1) += addToDistributeWhen1(chooseid)._2.toLong
-        //println("addto: "+addToDistributeWhen1(chooseid)._1)
-      } else if (V(chooseid) == 2) {
-        for (j <- addToDistributeWhen2(chooseid)) {
-          distribute(j._1) += j._2.toLong
-        }
-      }
-    }
-    //println("calV :  " +distribute.mkString(",")) // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    V
-  }
-
-  /*================query defenition ===================*/
-   def partition_r(
-    ss1: String,
-    indexNum: Broadcast[scala.collection.Map[(Int, Boolean), Long]],
-    partitionTable: Broadcast[scala.collection.immutable.Map[Int, Int]],
-    minimum: Int,
-    group: Broadcast[Array[(Int, Int)]],
-    threshold: Double,
-    alpha: Double,
-    partitionNum: Int,
-    topDegree: Int): Array[(Array[(Array[Int], Array[Boolean])],
-    Array[(Int, Boolean, Array[Boolean], Boolean, Int)])] = {
-    var result = ArrayBuffer[(Array[(Array[Int], Array[Boolean])],
-      Array[(Int, Boolean, Array[Boolean],
-        Boolean,
-        Int)])]()
-
-    val ss = ss1.split(" ").filter(x => x.length > 0)
-    val s = ss.size
-    val range = group.value
-      .filter(x => {
-        x._1 <= Math.floor(s / threshold).toInt && x._2 >= (Math.ceil(threshold * s) + 0.0001).toInt
-      })
-    for (lrange <- range) {
-      val l = lrange._1
-      val isExtend = {
-        if (l == range(range.length - 1)._1) {
-          false
-        }
-        else {
-          true
-        }
-      }
-
-      val H = CalculateH1(l, threshold)
-
-      // each segment and its v value of this record
-      val records = ArrayBuffer[(Array[Int], Array[Boolean])]()
-
-      val substring = {
-        for (i <- 1 until H + 1) yield {
-          val p = ss.filter(x => segNum(x, H) == i)
-          if (p.length == 0) "" else if (p.length == 1) p(0) else p.reduce(_ + " " + _)
-        }
-      }.toArray
+      var multiGroup:Broadcast[Array[(Int, Int)]] = null
+      var frequencyTable: Broadcast[scala.collection.Map[(Int, Boolean), Long]] = null
+      var partitionTable: Broadcast[scala.collection.immutable.Map[Int, Int]] = null
       
 
-      //println(s"=====> call calculateVsl")
-      val V = calculateVsl(s,
-        l,
-        indexNum.value,
-        partitionTable.value,
-        substring,
-        H,
-        minimum,
-        alpha,
-        partitionNum,
-        topDegree)
+      var CacheThread: Thread = null
+      var RemoveListThread: Thread = null
+      var EndCondition: Thread = null
+      var HitThread: Thread = null
 
-      //println(s"V: " + V.mkString(" ")+" / substring : "+substring.mkString(" ")+ " / partitionNum : "+partitionNum.toString)
+      var missedIPRDDCount: Long = 0
 
-      for (i <- 1 until H + 1) {
-        val p = ss.filter(x => segNum(x, H) == i)
-        val a = p.map(x => {
-          //println(s"records_hashCode : "+x+" , "+x.hashCode.toString)
-        })
-        records += Tuple2(p.map(x => x.hashCode), {
-          if (V(i - 1) == 0) Array()
-          else if (V(i - 1) == 1) Array(false)
-          else Array(true)
-        })
-      }
-      // probe seg/del signatures of this probe record
-      var result1 = ArrayBuffer[(Int, Boolean, Array[Boolean], Boolean, Int)]()
-      for (i <- 1 until H + 1) {
-        val hash = (substring(i - 1), i, l).hashCode()
-        if (V(i - 1) == 1) {
-          //println(s"segProbeSig_1: (" + substring(i - 1) + ", " + i + ", " + l + ")" )
-          result1 += Tuple5(hash, false, Array(false), isExtend, i)
-        }
-        else if (V(i - 1) == 2) {
-          //println(s"segProbeSig_2: (" + substring(i - 1) + ", " + i + ", " + l + ")" )
-          result1 += Tuple5(hash, false, Array(true), isExtend, i)
-          if (substring(i - 1).length > 0) {
-            for (k <- createDeletion(substring(i - 1))) {
-              //println(s"segProbeSig_2: (" + k + ", " + i + ", " + l + ")" )
-              val hash1 = (k, i, l).hashCode()
-              result1 += Tuple5(hash1, true, Array(true), isExtend, i)
-            }
-          }
-        }
-      }
-      result += Tuple2(records.toArray, result1.toArray)
-      //println(s"partition_r_Tuple"+records.toArray.mkString(" ")+" , "+result1.toArray.mkString(" "))
-      //println(s"#partition_r_Tuple_record")
-      //for(e <- records) println(s"  >>hash:  "+e._1.mkString(" ")+ ", "+e._2.mkString(" "))
-      //println(s"#partition_r_Tuple_result")
-      //for(e <- result1) println(s"  >>hash : "+e._1+","+e._3.mkString(" "))
-    }
+      var isEmpty_missedData = false
+      var DB_count:Long = 0
+      var cachedPRDDDataCount:Long = 0
+      var cachedDataCount:Long = 0
+      var query_count:Long = 0
+      var hitdimacount:Long = 0
+      var inputKeysRDD_count:Long = 0
 
-    result.toArray
-  }
-  
+      var hit_sum:Long = 0
+      var query_sum:Long = 0
+      var cogroup_query_cache_sum:Long = 0
+      var hit_dima_sum:Long = 0
+      var inputKeysRDD_sum:Long = 0
+      var LRU_sum:Long = 0
+      var DB_get_sum:Long = 0
+      var query_mapParition_sum:Long = 0
+      var cwa_sum:Long = 0
+      var miss_dima_sum:Long = 0
+      var cached_sum:Long = 0
+      var cache_time_sum:Long = 0
+      var latency_sum:Long = 0
+      var union_sum:Long = 0
 
-  def calculateOverlapBound(t: Float, xl: Int, yl: Int): Int = {
-    (Math.ceil((t / (t + 1)) * (xl + yl)) + 0.0001).toInt
-  }
+      val data_num = args(0).toString
+      //val db_coll_name = "Musical_Sig"+data_num
+      val db_coll_name = "musical_sig"+data_num
+      val coll_name = "mongodb://192.168.0.15:27017/REVIEW.musical_"+data_num 
+      val cache_name = "/home/user/Desktop/hongji/ref/review_data/Musical_Instruments_sig100.json"   
+      var qlist = List[Int]()
 
-  def verify(x: Array[(Array[Int], Array[Boolean])],
-                     y: Array[(Array[Int], Array[Boolean])],
-                     threshold: Double,
-                     pos: Int, xLength: Int, yLength: Int
-                    ): Boolean = {
-    //println(s"enter verification, pos: ${pos}, xLength: ${xLength}, yLength: ${yLength}")
-    val overlap = calculateOverlapBound(threshold.asInstanceOf[Float], xLength, yLength)
-    var currentOverlap = 0
-    var currentXLength = 0
-    var currentYLength = 0
-    for (i <- 0 until x.length) {
-      var n = 0
-      var m = 0
-      var o = 0
-      while (n < x(i)._1.length && m < y(i)._1.length) {
-        if (x(i)._1(n) == y(i)._1(m)) {
-          o += 1
-          n += 1
-          m += 1
-        } else if (x(i)._1(n) < y(i)._1(m)) {
-          n += 1
-        } else {
-          m += 1
-        }
-      }
-      currentOverlap = o + currentOverlap
-      currentXLength += x(i)._1.length
-      currentYLength += y(i)._1.length
-      val diff = x(i)._1.length + y(i)._1.length - o * 2
-      val Vx = {
-        if (x(i)._2.length == 0) {
-          0
-        } else if (x(i)._2.length == 1 && !x(i)._2(0)) {
-          1
-        } else {
-          2
-        }
-      }
-      val Vy = {
-        if (y(i)._2.length == 0) {
-          0
-        } else if (y(i)._2.length == 1 && !y(i)._2(0)) {
-          1
-        } else {
-          2
-        }
-      }
-      if (i + 1 < pos) {
-        if (diff < Vx || diff < Vy) {
-          //println(s"i:$i, overlap")
-          return false
-        }
-      }
-      if (currentOverlap + Math.min((xLength - currentXLength),
-        (yLength - currentYLength)) < overlap) {
-        /*
-        println(s"i:$i, currentOverlap:$currentOverlap, " +
-          s"xLength: $xLength, yLength: $yLength, currentXLength: $currentXLength, " +
-          s"currentYLength: $currentYLength, overlap: $overlap, prune") */
-        return false
-      }
-    }
-    if (currentOverlap >= overlap) {
-      return true
-    } else {
-     // println(s"finalOverlap:$currentOverlap, overlap: $overlap, false")
-      return false
-    }
-  }
+      //change mongospark version = 2.2.6  to 2.1.0
+      /*index collection*/
+      val readConfig = ReadConfig(Map(
+        "spark.mongodb.input.uri" -> coll_name,
+        "spark.mongodb.input.readPreference.name" -> "primaryPreferred"      
+       ))
+      val load = MongoSpark.load(sc,readConfig)
+      val preRDD = load.map( x => x.getString("reviewText"))
+      val dataRDD = preRDD.map(x => (x,x))
+      /*
+       --  Run DIMA BuildIndex 
+          -- set indexedRDD from buildIndex and f , multigroup        
+      */
+      var buildIndexSig = BuildSig.main(sc, dataRDD, partition_num) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
+      frequencyTable = sc.broadcast(buildIndexSig._2.collectAsMap())
+      multiGroup = buildIndexSig._3
+      sc = buildIndexSig._4
+      minimum = buildIndexSig._5
+      partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)
 
-  def compareSimilarity(
-    query: ((Int, String, Array[(Array[Int], Array[Boolean])])
-      , Boolean, Array[Boolean], Boolean, Int),
-    index: ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)): Boolean = {
-    /*
-    println(s"compare { ${query._1._2} } and " +
-      s"{ ${index._1._2}}")
-    println(s"isDeletionIndex: ${index._2}, isDeletionQuery: ${query._2}, val" +
-      s"ue: ${
-        if (query._3.length == 0) {
-          0
-        } else if (!query._3(0)) {
-          1
-        } else {
-          2
-        }
-      }")*/
-    val pos = query._5
-    val query_length = query._1._3
-      .map(x => x._1.length)
-      .reduce(_ + _)
-    val index_length = index._1._3
-      .map(x => x._1.length)
-      .reduce(_ + _)
-    if (index._2) { //
-      if (!query._2 && query._3.length > 0 && query._3(0)) {
-          verify(query._1._3, index._1._3, threshold, pos,
-            query_length, index_length)
-      } else {
-        false
-      }
-    } else {
-      verify(query._1._3, index._1._3, threshold, pos,
-        query_length, index_length)
-    }
-  }
- /*============= Main function ===============*/
-  def buildIndex(): Unit = {
+      /*
+       --  Run DIMA BuildIndex 
+          -- set indexedRDD from buildIndex and f , multigroup        
+      */             
 
-  /* input random value */
 
+      println("index coll: "+coll_name)
+      println("cache coll: "+cache_name)
+      println("sig_index coll: "+db_coll_name)
     
-    val conf = new SparkConf().setAppName("DimaJoin_alone_stream")
-    val sc = new SparkContext(conf)
-    var sqlContext = new SQLContext(sc)
-    val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
-    val stream = ssc.socketTextStream("192.168.0.11", 9999)
-
-    val data_num = args(0).toString
-    val coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_"+data_num
-    println("index coll: "+coll_name)
-
-    //index collection
-    val readConfig = ReadConfig(Map(
-      "spark.mongodb.input.uri" -> coll_name,
-      "spark.mongodb.input.readPreference.name" -> "primaryPreferred"      
-      ))
-
-    //query collection
-  /*  val query_readConfig = ReadConfig(Map(
-      "spark.mongodb.input.uri" -> "mongodb://192.168.0.11:27017/REVIEW.musical_100", 
-      "spark.mongodb.input.readPreference.name" -> "primaryPreferred" 
-      ))
-*/
-    val load = MongoSpark.load(sc,readConfig)
-    val preRDD = load.map( x => x.getString("reviewText"))
-    val dataRDD = preRDD.map(x => (x,x))
-
-   /* val query_load = MongoSpark.load(sc,query_readConfig)
-    val query_preRDD = query_load.map( x => x.getString("reviewText"))
-    //val queryRDD = query_preRDD.map(x => (x,x))
-*/
-    /* 
-
-    FOR INDEX DATA RDD
-
-    */
-    var streamingIteration = 1
-    stream.foreachRDD({ query => 
-      if(!query.isEmpty()){
+      /* Run DIMA Similarity Join 
+      ===========================stream====================================
+      */
+      var start_total = System.currentTimeMillis
+      stream.foreachRDD({ rdd => 
+        if(!rdd.isEmpty()){
 
           val tStart = System.currentTimeMillis
+          var compSign = 1
+          var DB_PRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
+          var queryIRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
+         // var joinedPRDD_missed:org.apache.spark.rdd.RDD[(Int, String)] = null 
+         // var cogroupedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)], Iterable[((String, String), Boolean)]))] = null
+          var missedRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
+          var missedIPRDD:org.apache.spark.rdd.RDD[(String, String)] = null 
+          //var joinedPRDD_missed_total:(org.apache.spark.rdd.RDD[(Int, String)], org.apache.spark.SparkContext) = null
+          var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, String)] = null
+          var hitquery:org.apache.spark.rdd.RDD[(String, String)] = null
+          var hitcache:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
+
+          var outputCount: Long = 0
+
+          isEmpty_missedData = false
 
           println("\n\nStart|Stream num: " + streamingIteration)
+       
 
-          var input_file = sqlContext.read.json(query)
+          var input_file = sqlContext.read.json(rdd)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.rdd
-          val queryRDD = rows.map( x => (x(1).toString, x(1).toString)).filter(s => !s._1.isEmpty)
-          val query_count = queryRDD.count()
+          var queryRDD = rows.map( x => (x(1).toString, x(1).toString)).filter(s => !s._1.isEmpty).partitionBy(hashP)
+          val query_hashRDD = queryRDD.map(x => (x._1.hashCode(), x._1))
+          query_count = queryRDD.count()
 
           println("data|qc|query_count : " + query_count)
-            //val queryRDD = query.map(x => (x,x))
+          query_sum = query_sum + query_count
 
-            val tStart1 = System.currentTimeMillis
-            val rdd = dataRDD.map(x => (x._1.toString.split(" "), x._2))
-
-            val rdd1 = rdd.map(x => x._1.length).persist(StorageLevel.DISK_ONLY)
-            val minimum = sc.broadcast(rdd1.min())
-            val maximum = sc.broadcast(rdd1.max())
-            val count = sc.broadcast(rdd1.count())
-            rdd1.unpersist()
-            //val average = rdd1.sum() / count.value
-
-            val multiGroup = sc.broadcast(multigroup(minimum.value, maximum.value, threshold, alpha))
-
-            val inverseRDD = dataRDD
-              .map(x => {
-               // println(s"inverseRDD = dataRDD : " + x._1.toString + " , " + x._2 )
-                (sortByValue(x._1.toString),x._2) 
-              })
-
-            val splittedRecord = inverseRDD
-              .map(x => {
-                //println(s"splittedRecord_1 = inverseRDD: (" + x._1 + " , " + x._2  +")" )
-                ((x._1, x._2), createInverse(x._1, multiGroup.value, threshold))
-              })
-              .flatMapValues(x => x)
-              .map(x => {
-               // println(s"splittedRecord_2 = inverseRDD: (" + x._1 + " , " + x._2._2 + " , " +  x._2._3 + " , " +  x._2._1  +")")
-                ((x._1, x._2._2, x._2._3), x._2._1)
-              })
-
-            val deletionIndexSig = splittedRecord
-              .filter(x => (x._2.length > 0))
-              .map(x => (x._1, createDeletion(x._2))) // (1,i,l), deletionSubstring
-              .flatMapValues(x => x)
-              .map(x => {
-              //  println(s"deletionIndexSig = splittedRecord: (" + x._2 + ", " + x._1._2 + ", " + x._1._3 + ")   / hashCode : " +  (x._2, x._1._2, x._1._3).hashCode().toString)
-                ((x._2, x._1._2, x._1._3).hashCode(), (x._1._1, true))
-              })
-            // (hashCode, (String, internalrow))
-
-            val segIndexSig = splittedRecord
-              .map(x => {
-                //println(s"segIndexSig = splittedRecord: (" + x._2 + ", " + x._1._2 + ", " + x._1._3 + ")  / hashCode : " +  (x._2, x._1._2, x._1._3).hashCode().toString)
-                ((x._2, x._1._2, x._1._3).hashCode(), (x._1._1, false))
-              })
-
-            val index = deletionIndexSig.union(segIndexSig).persist(StorageLevel.DISK_ONLY)
-
-
-            val f = index
-              .map(x => {
-                       // println(s"F = Index: (" + x._1 + ", " + x._2._2 + ", "+ ")" ) //x._2._1 is row data
-                ((x._1, x._2._2), 1L)
-              })
-              .reduceByKey(_ + _)
-              .filter(x => x._2 > 2) // we should change 0 to 2
-              .persist()
-
-            val frequencyTable = sc.broadcast(f.collectAsMap())
-
-            var partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)
-   
-            val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
-    
-
-            val indexed = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-              val data = iter.toArray
-              val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum.value, alpha, numPartitions)
-              Array(IPartition(partitionId, index, data
-                .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-                  createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
-                .map(x => {
-                  if (x._1.length > 0) {
-                    (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-                  } else {
-                    (Array[Int](), Array[Boolean]())
-                  }
-                                })), x._2._2)))).iterator
-                      }).persist(StorageLevel.MEMORY_AND_DISK_SER)
-           indexed.count
-
-            var indexRDD = indexed
-            val tEnd1 = System.currentTimeMillis
-            println("time|1|build indexRDD: " + (tEnd1 - tStart1) + " ms")
-
-
-          /* 
-
-          FOR QUERY DATA RDD
-
-          */
-          val tStart2 = System.currentTimeMillis
-           val query_rdd = queryRDD
-              .map(x => (sortByValue(x._1), x._2))
-              // .distinct
-              .map(x => ((x._1.hashCode, x._2, x._1),
-                partition_r(
-                  x._1, frequencyTable, partitionTable, minimum.value, multiGroup,
-                  threshold, alpha, numPartitions, topDegree
-                )))
-              .flatMapValues(x => x)
-              .map(x => {
-               // println(s"#query_rdd_1 : (" + x._1._1 + " / " + x._1._2 + " / " + x._1._2 + ")")
-                //for(e <- x._2._2) println(s"  >>qr1: x._2._2 : " + e._1 +","+ e._2+","+e._3.mkString(" ")+","+e._4+","+e._5)
-                ((x._1._1, x._1._2, x._2._1), x._2._2)
-              })
-              .flatMapValues(x => x)
-              .map(x => {
-               // println(s"#query_rdd_2 : (" + x._2._1 + ") ,( " + x._1 + "/ "+  x._2._2 + ",/"+  x._2._3.mkString(" ")+ "/" + x._2._4 + "/" + x._2._2 + ")" )
-                //for(e <- x._1._3) println(s"  >>qr2: x._1._3 : " +e._1.mkString(" ")+ " / "+ e._2.mkString(" "))
-                        (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
-              })
-
-            def Has(x : Int, array: Array[Int]): Boolean = {
-              for (i <- array) {
-                if (x == i) {
-                  return true
-                }
-              }
-              false
-            }
-
-            val partitionLoad = query_rdd
-              .mapPartitions({iter =>
-                //println("ooooing?22")
-                //println("distr : "+distribute.mkString(","))
-                Array(distribute.clone()).iterator
-              }).collect().reduce((a, b) => {
-                //println("ooooing?")
-                val r = ArrayBuffer[Long]()
-                for (i <- 0 until numPartitions) {
-                  //println("a(i)"+a(i).toString+",  b(i)"+b(i).toString)
-                  r += (a(i) + b(i))
-                }
-                r.toArray.map(x => (x/numPartitions) * 8) // for to integer?
-              })
-
-            val maxPartitionId = sc.broadcast({
-              val result = ArrayBuffer[Int]()
-              for (l <- 0 until partitionNumToBeSent) {
-                var max = 0.toLong
-                var in = -1
-                for (i <- 0 until numPartitions) {
-                  //println("oing? : "+partitionLoad(i).toString)
-                  if (!Has(i, result.toArray) && partitionLoad(i) > max) {
-                    max = partitionLoad(i) //i-th partition load
-                    in = i //index
-                  }
-                }
-                result += in
-              }
-              result.toArray
-            })
-
-            println("maxPartitionId: "+maxPartitionId.value.mkString(","))
-
-            val extraIndex = sc.broadcast(
-              indexRDD.mapPartitionsWithIndex((Index, iter) => {
-                Array((Index, iter.toArray)).iterator
-              }).filter(x => Has(x._1, maxPartitionId.value))
-                .map(x => x._2)
-                .collect())
-
-            val query_rdd_partitioned = new SimilarityRDD(
-              query_rdd.partitionBy(
-                  new SimilarityQueryPartitioner(
-                     numPartitions, partitionTable, frequencyTable, maxPartitionId.value)
-                ), true
-            ).persist(StorageLevel.MEMORY_AND_DISK_SER)
-  
-
-            /* INDEX x QUERY 
-
-            println("\n===>  indexRDD")
-            for(e <- indexRDD) {
-              println(s"\n - partitonID : "+e._1 + "\n - Index : "+e._2 + "\n - raw_hashcode : "+ e._3(0)._1._1 + "\n  - raw data : "+e._3(0)._1._2 +"\n  - signature token(only string) hashcode : "+e._3(0)._1._3(0)._1.mkString(" ") +"\n  - signature token(only string) hashcode : "+e._3(0)._1._3(1)._1.mkString(" ") +"\n - bool : "+e._3(0)._2)
-            }
-
-           println("===>  query_rdd_partitioned")
-            for(e <- query_rdd_partitioned){
-              println(s"\n[signature hashcode : "+e._1+"]" + "\n - IsDel : "+e._2._2 +"\n - IsTwo : "+e._2._3.mkString(" ") + "\n - IsExtend : "+e._2._4 + "\n - segNUm : "+e._2._5 +"\n - raw_hashcode : "+e._2._1._1 + "\n    - raw data : "+e._2._1._2 + "\n    - partition_r_records_code(signature token hashcode) : "+e._2._1._3(0)._1.mkString(" ") + "\n    - partition_r_records_bool : "+e._2._1._3(0)._2.mkString(" ") + "\n    - partition_r_records_code(signature token hashcode) : "+e._2._1._3(1)._1.mkString(" ") + "\n    - partition_r_records_bool : "+e._2._1._3(1)._2.mkString(" "))
-            }
-            */
-
-            // for saving answer, compareList 
-            var ans = mutable.ListBuffer[(String, String)]()
-            var comList= mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)  , ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)) ]()
- 
-
-            val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
-              (leftIter, rightIter) => {
-                //println(s"zipPartitions")
-                val index = rightIter.next
-                val index2 = extraIndex.value
-                var countNum:Double = 0.0
-                var pId = 0
-                val partitionId = index.partitionId
-                while (leftIter.hasNext) {
-
-                  val q = leftIter.next
-                  val positionOfQ = partitionTable.value.getOrElse(q._1, hashStrategy(q._1))
-                  val (candidate, whichIndex) = {
-                    if (positionOfQ != partitionId) {
-                      var (c, w) = (List[Int](), -1)
-                              var goon = true
-                      var i = 0
-                     while (goon && i < index2.length) {
-                          if (index2(i)(0).partitionId == positionOfQ) {
-                          c = index2(i)(0).index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-                                  w = i
-                          goon = false
-                        }
-                        i += 1
-                      }
-                      (c, w)
-                    } else {
-                      (index.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List()), -1)
-                    }
-                  }
-                  //println(s"candidate : (" + candidate.mkString(" ") + ")")
-                  for (i <- candidate) {
-                   val data = {
-                      if (whichIndex < 0) {
-                       index.data(i)
-                      } else {
-                        index2(whichIndex)(0).data(i)
-                      }
-                    }
-                   if (compareSimilarity(q._2, data)) {
-                      //println(s"ans+=Tuple2 : (" + q._2._1._2 + ", " + data._1._2 + " )")
-                      ans += Tuple2(q._2._1._2, data._1._2)
-                    }
-                  }
-                }
-                //ans.map(x => new JoinedRow(x._2, x._1)).iterator
-                
-                ans.map(x => {
-                  //println(s"====> zipPartitions : (" + x._2 + " ///// " + x._1 + " )")
-                  (x._2, x._1)
-                }).iterator
-              }
-            }.persist
-
-            val tEnd2 = System.currentTimeMillis
-            println("time|2|Dima-queryZipPartition: " + (tEnd2 - tStart2) + " ms")
-        
-            val result_out = final_result.count()//.distinct().collect()
-            println("final_result.count(): "+result_out)
-
-            val tEnd = System.currentTimeMillis
-            var currStreamTime = tEnd - tStart
-
-            streamingIteration = streamingIteration + 1
-            println("time|8|stream: " + currStreamTime + " ms")
+          var t0 = System.currentTimeMillis 
               
-              }
+
+          var queryForIndex = queryRDD.map(x => (DimaJoin.sortByValue(x._1), x._2))
+                  .map(x => ((x._1.hashCode, x._2, x._1),
+                   DimaJoin.partition_r(
+                       x._1, frequencyTable, partitionTable, minimum, multiGroup,
+                         threshold, alpha, partition_num, topDegree
+                     )))
+                  .flatMapValues(x => x)
+                  .map(x => { ((x._1._1, x._1._2, x._2._1), x._2._2)})
+                  .flatMapValues(x => x)
+                  .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}) //x._2._1 => sig 
+
+                  queryForIndex.count()
+
+                  
+                  //println("missedRDD.partitioner: "+missedRDD.partitioner) //HashPartitioner
+                  DB_PRDD = queryForIndex.mapPartitions({ iter =>
+                      var client: MongoClient = MongoClient("mongodb://192.168.0.10:27017") //mongos server
+                      var database: MongoDatabase = client.getDatabase("musical")
+                      //var database: MongoDatabase = client.getDatabase("musical")
+                      var collection: MongoCollection[Document] = database.getCollection(db_coll_name) 
+                     
+                      var qlist_map = qlist
+                      var dbData:Array[(Int, ((String, String), Boolean))] = Array() //xx // old version 
+                      
+                        if(!iter.isEmpty){
+
+                          iter.foreach(q =>
+                            qlist_map ::= q._1.toInt
+                          )
+
+                          var query = in("signature", qlist_map:_*) // the query filter
+                          var temp = collection.find(query) //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
+                          //var temp = collection.distinct("signature").filter(query)
+
+                          /*
+                          temp.subscribe(new Observer[org.mongodb.scala.Document]){
+
+                          }
+                          */
+
+                          var awaited = Await.result(temp.toFuture, scala.concurrent.duration.Duration.Inf)
+
+                          for(data <- awaited){
+                            dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean))  
+                          }                  
+                        }
+                        client.close()
+                        
+                        var db_arr = dbData.map( s => (s._1, ((s._2._1._1, s._2._1._2), s._2._2)))
+                        db_arr.iterator
+                        
+                   }, preservesPartitioning = true)
+                   
+
+                  DB_count = DB_PRDD.cache().count()
+                  println("[d]data|dc|DB get count: " + DB_count ) 
+                  DB_get_sum = DB_get_sum + DB_count              
+  
+                  var joinedPRDD_missed_total = DimaJoin.main(sc, DB_PRDD, queryForIndex , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
+              
+                  var joinedPRDD_missed = joinedPRDD_missed_total._1
+                  sc = joinedPRDD_missed_total._2
+
+                  outputCount = joinedPRDD_missed.count
+                  println("output count : "+outputCount)
 
 
-            })
+             var t1 = System.currentTimeMillis
+
+
+
+
+          EndCondition = new Thread(){
+            override def run = {
+              if(streaming_data_all > 2000 )   ssc.stop()
+            }
+          }// EndCondition END
+
+          /* ------- main ------*/
+
+          EndCondition.start()
+            
+          
+          currStreamTime = t1 - t0
+          println("time|8|latency: " + currStreamTime + " ms")
+          latency_sum = latency_sum + currStreamTime
+
+          streamingIteration = streamingIteration + 1
+
+          pppCogTime = ppCogTime
+          ppCogTime = pCogTime
+          pCogTime = currCogTime
+
+          pppDBTime = ppDBTime
+          ppDBTime = pDBTime
+          pDBTime = currDBTime
+
+          ppppCacheTime = pppCacheTime        
+          pppCacheTime = ppCacheTime
+          ppCacheTime = pCacheTime
+        
+          ppIterationTime = pIterationTime
+        
+          ppMissedKeysCount = pMissedKeysCount
+
+          ppCachingWindow = pCachingWindow
+          pCachingWindow = cachingWindow
+        
+          pCacheTime = currCacheTime
+        
+          pOutputCount = outputCount
+          pIterationTime = currStreamTime
+          pMissedKeysCount = missedKeysCount
+        
+          streaming_data_all = streaming_data_all + outputCount.toInt
+          println("data|all|streaming data all: " + streaming_data_all)
+
+
+         // if(!isEmpty_missedData){
+          //  
+          //}
+        }
+      })
 
       ssc.start()
       ssc.awaitTermination()
+      var end_total = System.currentTimeMillis
+      var total_time = end_total - start_total
 
-    //println(s"===>  Finish")
+      println("\n\n======Streaming average log=====\n")
+      println("> total streaming iteration : "+streamingIteration)
+      println("data|query_sum: " + query_sum/streamingIteration)
+      println("time|cogroup_query_cache_sum: "+cogroup_query_cache_sum/streamingIteration+" ms")   
+      println("data|hit sum: " + hit_sum/streamingIteration)
+      println("time|hit_dima_sum: "+hit_dima_sum/streamingIteration+" ms")
+      println("data|inputKeysRDD_sum: " + inputKeysRDD_sum/streamingIteration)
+      println("time|LRU_sum: "+LRU_sum/streamingIteration+" ms")
+      println("data|DB_get_sum: " + DB_get_sum/streamingIteration)
+      println("time|query_mapParition_sum: "+query_mapParition_sum/streamingIteration+" ms")
+      println("data|cwa_sum: " + cwa_sum/streamingIteration)
+      println("time|miss_dima_sum: "+miss_dima_sum/streamingIteration+" ms")
+      println("data|cached_sum: " + cached_sum/streamingIteration)
+      println("time|cache_time_sum: "+cache_time_sum/streamingIteration+" ms")
+      println("time|union_sum: "+union_sum/streamingIteration+" ms")
+      println("data|streaming data all: " + streaming_data_all)
+      println("time|latency_sum: "+latency_sum/streamingIteration+" ms")
+      println("time|total time: "+total_time+" ms")
+      println("\n=================================\n")
 
-    //sc.parallelize(result_out).saveAsTextFile("./final_result")
+      
+
+
+
     }
-  }
 
-}
+
+ }
