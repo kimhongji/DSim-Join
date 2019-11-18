@@ -287,7 +287,7 @@ object DimaJoin_alone_stream{
                   println("[d]data|dc|DB get count: " + DB_count ) 
                   DB_get_sum = DB_get_sum + DB_count              
   
-                  var joinedPRDD_missed_total = DimaJoin.main(sc, DB_PRDD, queryForIndex , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
+                  var joinedPRDD_missed_total = DimaJoin.main(sc, DB_PRDD, queryRDD , frequencyTable, partitionTable, multiGroup, minimum, partition_num)
               
                   var joinedPRDD_missed = joinedPRDD_missed_total._1
                   sc = joinedPRDD_missed_total._2

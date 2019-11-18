@@ -28,12 +28,6 @@ import scala.collection.mutable
 import scala.util.{Failure, Success}
 
 
-
-
-case class IPartition(partitionId: Int,
-                      index: Index,
-                      data: Array[((Int,String, Array[(Array[Int], Array[Boolean])]), Boolean)])
-
 /* ===================================
 sbt clean assembly
     Main object 
@@ -44,7 +38,7 @@ sbt clean assembly
 ../spark-2.2.3-bin-hadoop2.6/bin/spark-submit --class ds_join.DimaJoin --master spark://dsl-desktop:7077 ./target/scala-2.11/Dima-DS-assembly-1.0.jar
 
 ===================================*/
-object DimaJoin{
+object DimaJoin2{
 
   var numPartitions:Int = 4
   val threshold:Double = 0.8  // threshold!!!!!!!
@@ -465,15 +459,8 @@ object DimaJoin{
       }
     }
 
-    for (chooseid <- 0 until H) {
-      if (V(chooseid) == 1) {
-        distribute(addToDistributeWhen1(chooseid)._1) += addToDistributeWhen1(chooseid)._2.toLong
-      } else if (V(chooseid) == 2) {
-        for (j <- addToDistributeWhen2(chooseid)) {
-          distribute(j._1) += j._2.toLong
-        }
-      }
-    }
+    //remove ( abount partiton load)
+
     V
   }
 
@@ -736,24 +723,29 @@ object DimaJoin{
         }
       }
       if (i + 1 < pos) {
-        if ( diff< Vx || diff < Vy) {
+        if ( diff < Vx || diff < Vy) {
+          println(s"diff : ${diff}, Vx :${Vx}, Vy : ${Vy}")
           println(s"i:$i, overlap")
+          println("false2")
           return false
         }
       }
       if (currentOverlap + Math.min((xLength - currentXLength),
         (yLength - currentYLength)) < overlap) {
-      
+        
         println(s"i:$i, currentOverlap:$currentOverlap, " +
           s"xLength: $xLength, yLength: $yLength, currentXLength: $currentXLength, " +
           s"currentYLength: $currentYLength, overlap: $overlap, prune")
+          
+          println("false3")
         return false
       }
     }
     if (currentOverlap >= overlap) {
       return true
     } else {
-      //println(s"finalOverlap:$currentOverlap, overlap: $overlap, false")
+      println(s"finalOverlap:$currentOverlap, overlap: $overlap, false")
+      println("false4")
       return false
     }
   }
@@ -775,6 +767,7 @@ object DimaJoin{
           verify(query._1._3, index._1._3, threshold, pos,
             query_length, index_length)
       } else {
+        println("false1")
         false
       }
     } else {
@@ -788,23 +781,6 @@ object DimaJoin{
 
   /* input random value */
     
-   /*
-    
-
-    val f = index
-      .map(x => {
-       // println(s"F = Index: (" + x._1 + ", " + x._2._2 + ", "+ ")" ) //x._2._1 is row data
-        ((x._1, x._2._2), 1L)
-      })
-      .reduceByKey(_ + _)
-      .filter(x => x._2 > 2) // we should change 0 to 2
-      .persist()
-
-    val frequencyTable = sc.broadcast(f.collectAsMap())
-
-    var partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)
-*/ 
-
 
     def Has(x : Int, array: Array[Int]): Boolean = {
       for (i <- array) {
@@ -818,7 +794,7 @@ object DimaJoin{
     val index = data
     val queryRDD = query  //stream
 
-    var indexRDD:org.apache.spark.rdd.RDD[IPartition] = null
+    //var indexRDD:org.apache.spark.rdd.RDD[IPartition] = null
     var query_rdd_partitioned:ds_join.SimilarityRDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
     var maxPartitionId:org.apache.spark.broadcast.Broadcast[Array[Int]] = null
     var query_rdd:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
@@ -828,24 +804,22 @@ object DimaJoin{
        
     //println("in DIMA index  : " +index.partitioner)
     //println("in DIMA queryRDD  : " +queryRDD.partitioner)
-    val partitionedRDD = index//.partitionBy(hashP)
+    val partitionedRDD = index
     //val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
     //println("partitionedRDD.partitioner: "+partitionedRDD.partitioner)//SimilarityHashPartitioner
-    indexRDD = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-      val data = iter.toArray
-      val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, numPartitions)
-      Array(IPartition(partitionId, index, data
-        .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-           createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
+    var indexRDD = partitionedRDD.mapPartitions({ iter => 
+      iter.map( s => (s._1 , ((sortByValue(s._2._1._1).hashCode, s._2._1._2, 
+           createInverse(sortByValue(s._2._1._1), multiGroup.value, threshold)
         .map(x => {
           if (x._1.length > 0) {
              (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
            } else {
             (Array[Int](), Array[Boolean]())
            }
-         })), x._2._2)))).iterator
-      }, preservesPartitioning=true).cache()    
-     //println("indexRDD.partitioner: "+indexRDD.partitioner)//SimilarityHashPartitioner
+         })), s._2._2)))//.iterator
+      }, preservesPartitioning=true).cache()   
+
+      //println("indexRDD.partitioner: "+indexRDD.partitioner)//SimilarityHashPartitioner
      var t1 = System.currentTimeMillis();
 
 
@@ -875,49 +849,34 @@ object DimaJoin{
 
      var max_temp = Array(-1)
      query_rdd_partitioned = new SimilarityRDD(
-       query_rdd.partitionBy(
-            new SimilarityQueryPartitioner(
-              numPartitions, partitionTable, frequencyTable, max_temp)
-         ), true
-     ).cache()
-
-    var ans = mutable.ListBuffer[(Int, String, String)]()
-    var comList= mutable.ListBuffer[(((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)  , ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)) ]()
-  //println("query_rdd_partitioned.partitioner: "+query_rdd_partitioned.partitioner) // SimilarityQueryPartitioner
-  //println("indexRDD.partitioner: "+indexRDD.partitioner)  //SimilarityHashPartitioner
-   var startTime_1 = System.currentTimeMillis();
-    val final_result = query_rdd_partitioned.zipPartitions(indexRDD, true) {
-      (leftIter, rightIter) => {
-        val index = rightIter.next
-        while (leftIter.hasNext) {
-          val q = leftIter.next
-          val candidate = index.index.asInstanceOf[JaccardIndex].index.getOrElse(q._1, List())
-          for (i <- candidate) {
-            val data = {
-                index.data(i)
-            }
-            println("q: "+q._2._1._1+" i: "+data._1._1)
-            if (compareSimilarity(q._2, data)) {
+       query_rdd.partitionBy(new SimilarityQueryPartitioner(numPartitions, partitionTable, frequencyTable, max_temp)), true
+     )
+     var ans2 = mutable.ListBuffer[(Int, String, String)]()
+     
+     
+     var cogroupCRDD = query_rdd_partitioned.cogroup(indexRDD).flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
+     /* cogroupCRDD = (signature, (iter(q), iter(i))) */
+     println("cogroupCRDD.partitioner: "+cogroupCRDD.partitioner)
+     var final_result_p = cogroupCRDD.mapPartitions({ iter =>
+        while(iter.hasNext){
+          var data = iter.next
+          var i = data._2._2
+          var q = data._2._1
+          println("q: "+q._1._1+" i: "+i._1._1)
+          if(compareSimilarity(q, i)){
               println("push")
-              ans += Tuple3(q._2._1._2.hashCode(), q._2._1._2, data._1._2) // or q._2._1._2.hashCode()
-            }
+              ans2 += Tuple3(q._1._2.hashCode(), q._1._2, i._1._2) // or q._2._1._2.hashCode()
+            }       
           }
-        }        
-        ans.map(x => {
-          (x._1, x._3) //  queryhashcode, data
-        }).iterator
-      }
-    }//.cache()
-    var endTime_1 = System.currentTimeMillis();
-
-
-
-
+        ans2.map(x => (x._1, x._3)).iterator     
+      }, preservesPartitioning = true)
+     println("final_result_p.partitioner: "+final_result_p.partitioner)
+ 
     indexRDD.unpersist()
     //query_rdd_partitioned.unpersist()
     query_rdd.unpersist()
    
-    final_result
+    final_result_p
     }
 
     (dimajoined, sc)
