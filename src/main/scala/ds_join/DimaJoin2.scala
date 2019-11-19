@@ -628,7 +628,122 @@ object DimaJoin2{
 
     result.toArray
   }
+  def calculateOverlapBound2(t: Float, xl: Int, yl: Int): Int = {
+    (Math.ceil((t / (t + 1)) * (xl + yl)) + 0.0001).toInt
+  }
 
+  def verify2(x: Array[(Array[Int], Array[Boolean])], // query
+                     y: Array[(Array[Int], Array[Boolean])], //index
+                     threshold: Double,
+                     pos: Int, xLength: Int, yLength: Int
+                    ): Boolean = {
+   // println(s"enter verification, pos: ${pos}, xLength: ${xLength}, yLength: ${yLength}")
+    val overlap = calculateOverlapBound2(threshold.asInstanceOf[Float], xLength, yLength)
+    var currentOverlap = 0
+    var currentXLength = 0
+    var currentYLength = 0
+    for (i <- 0 until x.length) {
+      var n = 0
+      var m = 0
+      var o = 0
+      while (n < x(i)._1.length && m < y(i)._1.length) {
+        if (x(i)._1(n) == y(i)._1(m)) {
+          o += 1
+          n += 1
+          m += 1
+        } else if (x(i)._1(n) < y(i)._1(m)) {
+          n += 1
+        } else {
+          m += 1
+        }
+      }
+      currentOverlap = o + currentOverlap
+      currentXLength += x(i)._1.length
+      currentYLength += y(i)._1.length
+      val diff = x(i)._1.length + y(i)._1.length - o * 2
+      val Vx = {
+        if (x(i)._2.length == 0) {
+          0
+        } else if (x(i)._2.length == 1 && !x(i)._2(0)) {
+          1
+        } else {
+          2
+        }
+      }
+      val Vy = {
+        if (y(i)._2.length == 0) {
+          0
+        } else if (y(i)._2.length == 1 && !y(i)._2(0)) {
+          1
+        } else {
+          2
+        }
+      }
+      if (i + 1 < pos) {
+        if ( diff < Vx || diff < Vy) {
+          //println(s"diff : ${diff}, Vx :${Vx}, Vy : ${Vy}")
+          //println(s"i:$i, overlap")
+
+          return false
+        }
+      }
+      if (currentOverlap + Math.min((xLength - currentXLength),
+        (yLength - currentYLength)) < overlap) {
+        /*
+        println(s"i:$i, currentOverlap:$currentOverlap, " +
+          s"xLength: $xLength, yLength: $yLength, currentXLength: $currentXLength, " +
+          s"currentYLength: $currentYLength, overlap: $overlap, prune")
+        */
+        return false
+      }
+    }
+    if (currentOverlap >= overlap) {
+      return true
+    } else {
+      //println(s"finalOverlap:$currentOverlap, overlap: $overlap, false")
+    
+      return false
+    }
+  }
+
+  def compareSimilarity2(
+    query: ((Int, String, Array[(Array[Int], Array[Boolean])])
+      , Boolean, Array[Boolean], Boolean, Int),
+    index: ((String, String), Boolean),
+    multiGroup: Broadcast[Array[(Int, Int)]], 
+    threshold: Double): Boolean = {
+
+    val pos = query._5
+    val query_length = query._1._3
+      .map(x => x._1.length)
+      .reduce(_ + _)
+
+
+    val indexArr = createInverse(sortByValue(index._1._1), multiGroup.value, threshold )
+                    .map(x => {
+                      if(x._1.length > 0){
+                      (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
+                       }else {
+                      (Array[Int](), Array[Boolean]())
+                      }
+                   })
+    /* indexArr : Array[(Array[Int], Array[Boolean])] */
+    val index_length = indexArr.map(x => x._1.length)
+      .reduce(_ + _)
+
+
+    if (index._2) { //
+      if (!query._2 && query._3.length > 0 && query._3(0)) {
+          verify2(query._1._3, indexArr, threshold, pos,
+            query_length, index_length)
+      } else {
+        false
+      }
+    } else {
+      verify2(query._1._3, indexArr, threshold, pos,
+        query_length, index_length)
+    }
+  }
   def main(
             sc : org.apache.spark.SparkContext, 
             data: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))], 
@@ -753,25 +868,37 @@ object DimaJoin2{
   def compareSimilarity(
     query: ((Int, String, Array[(Array[Int], Array[Boolean])])
       , Boolean, Array[Boolean], Boolean, Int),
-    index: ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean)): Boolean = {
+    index: ((String, String), Boolean)): Boolean = {
 
     val pos = query._5
     val query_length = query._1._3
       .map(x => x._1.length)
       .reduce(_ + _)
-    val index_length = index._1._3
-      .map(x => x._1.length)
+
+
+    val indexArr = createInverse(sortByValue(index._1._1), multiGroup.value, threshold )
+                    .map(x => {
+                      if(x._1.length > 0){
+                      (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
+                       }else {
+                      (Array[Int](), Array[Boolean]())
+                      }
+                   })
+    /* indexArr : Array[(Array[Int], Array[Boolean])] */
+    val index_length = indexArr.map(x => x._1.length)
       .reduce(_ + _)
+
+
     if (index._2) { //
       if (!query._2 && query._3.length > 0 && query._3(0)) {
-          verify(query._1._3, index._1._3, threshold, pos,
+          verify2(query._1._3, indexArr, threshold, pos,
             query_length, index_length)
       } else {
         println("false1")
         false
       }
     } else {
-      verify(query._1._3, index._1._3, threshold, pos,
+      verify2(query._1._3, indexArr, threshold, pos,
         query_length, index_length)
     }
   }  
@@ -794,7 +921,7 @@ object DimaJoin2{
     val index = data
     val queryRDD = query  //stream
 
-    //var indexRDD:org.apache.spark.rdd.RDD[IPartition] = null
+    var indexRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean))] = null
     var query_rdd_partitioned:ds_join.SimilarityRDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
     var maxPartitionId:org.apache.spark.broadcast.Broadcast[Array[Int]] = null
     var query_rdd:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
@@ -807,7 +934,7 @@ object DimaJoin2{
     val partitionedRDD = index
     //val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
     //println("partitionedRDD.partitioner: "+partitionedRDD.partitioner)//SimilarityHashPartitioner
-    var indexRDD = partitionedRDD.mapPartitions({ iter => 
+    /*indexRDD = partitionedRDD.mapPartitions({ iter => 
       iter.map( s => (s._1 , ((sortByValue(s._2._1._1).hashCode, s._2._1._2, 
            createInverse(sortByValue(s._2._1._1), multiGroup.value, threshold)
         .map(x => {
@@ -818,7 +945,7 @@ object DimaJoin2{
            }
          })), s._2._2)))//.iterator
       }, preservesPartitioning=true).cache()   
-
+    */
       //println("indexRDD.partitioner: "+indexRDD.partitioner)//SimilarityHashPartitioner
      var t1 = System.currentTimeMillis();
 
@@ -829,7 +956,7 @@ object DimaJoin2{
 
     */
         //query_rdd = queryRDD
-        
+        /*
         query_rdd = queryRDD
           .map(x => (sortByValue(x._1), x._2))
           .map(x => ((x._1.hashCode, x._2, x._1),
@@ -845,7 +972,7 @@ object DimaJoin2{
          .map(x => {
             (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
           }).cache()
-  
+    */
 
      var max_temp = Array(-1)
      query_rdd_partitioned = new SimilarityRDD(
@@ -853,17 +980,19 @@ object DimaJoin2{
      )
      var ans2 = mutable.ListBuffer[(Int, String, String)]()
      
-     
-     var cogroupCRDD = query_rdd_partitioned.cogroup(indexRDD).flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
+     /* index = (signature, ((string, string), bool)) */
+     var cogroupCRDD = query_rdd_partitioned.cogroup(index).flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
      /* cogroupCRDD = (signature, (iter(q), iter(i))) */
      println("cogroupCRDD.partitioner: "+cogroupCRDD.partitioner)
      var final_result_p = cogroupCRDD.mapPartitions({ iter =>
         while(iter.hasNext){
           var data = iter.next
-          var i = data._2._2
+
           var q = data._2._1
-          println("q: "+q._1._1+" i: "+i._1._1)
-          if(compareSimilarity(q, i)){
+          var i = data._2._2
+          
+          println("q: "+q._1._1+" i: "+i._1._1.hashCode)
+          if(compareSimilarity(q, i)){ 
               println("push")
               ans2 += Tuple3(q._1._2.hashCode(), q._1._2, i._1._2) // or q._2._1._2.hashCode()
             }       
