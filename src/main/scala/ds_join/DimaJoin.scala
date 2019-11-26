@@ -541,7 +541,7 @@ object DimaJoin{
 
       for (i <- 1 until H + 1) {
         val p = ss.filter(x => segNum(x, H) == i)
-        records += Tuple2(p.map(x => x.hashCode), {
+        records += Tuple2(p.map(x => x.hashCode), { // verify duplication check??? 
           if (V(i - 1) == 0) Array()
           else if (V(i - 1) == 1) Array(false)
           else Array(true)
@@ -785,26 +785,6 @@ object DimaJoin{
 
  /*============= Main function ===============*/
   def buildIndex():org.apache.spark.rdd.RDD[(Int, String)] = {
-
-  /* input random value */
-    
-   /*
-    
-
-    val f = index
-      .map(x => {
-       // println(s"F = Index: (" + x._1 + ", " + x._2._2 + ", "+ ")" ) //x._2._1 is row data
-        ((x._1, x._2._2), 1L)
-      })
-      .reduceByKey(_ + _)
-      .filter(x => x._2 > 2) // we should change 0 to 2
-      .persist()
-
-    val frequencyTable = sc.broadcast(f.collectAsMap())
-
-    var partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)
-*/ 
-
 
     def Has(x : Int, array: Array[Int]): Boolean = {
       for (i <- array) {

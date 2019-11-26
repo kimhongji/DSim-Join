@@ -40,7 +40,7 @@ sbt clean assembly
 ===================================*/
 object DimaJoin2{
 
-  var numPartitions:Int = 4
+  var numPartitions:Int = 8
   val threshold:Double = 0.8  // threshold!!!!!!!
   //var distribute:Array[Long] = Array()
   var distribute = new Array[Long](4)

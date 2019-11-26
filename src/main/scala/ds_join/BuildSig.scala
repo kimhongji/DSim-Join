@@ -99,7 +99,8 @@ object BuildSig{
             sc : org.apache.spark.SparkContext, 
             data: org.apache.spark.rdd.RDD[(String, String)],
             numPartitions:Int):(
-                  org.apache.spark.rdd.RDD[(Int,((String, String) ,Boolean))],
+                  //org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean))],
+                  org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))],
                   org.apache.spark.rdd.RDD[((Int, Boolean), Long)],
                   Broadcast[Array[(Int, Int)]],
                   org.apache.spark.SparkContext,
@@ -285,7 +286,9 @@ object BuildSig{
         ((x._2, x._1._2, x._1._3).hashCode(), (x._1._1, false))
       })
 
-    index = deletionIndexSig.union(segIndexSig).persist()
+    index = deletionIndexSig.union(segIndexSig)
+    var indexCount = index.count()
+    println("index count : "+indexCount)
 
     f = index
       .map(x => {
@@ -300,15 +303,13 @@ object BuildSig{
     //f, multiGroup, minimum 
   }
 
-
-
   /*  ============== function call ============== */ 
   startTime_2 = System.currentTimeMillis();
   buildIndex()
   endTime_2 = System.currentTimeMillis();
 
   println("time|1|Dima-buildIndex: " + (endTime_2 - startTime_2) + " ms")
-  index.unpersist()
+  
   
 
   (index, f, multiGroup ,sc, minimum_f)
