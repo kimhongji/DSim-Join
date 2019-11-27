@@ -233,7 +233,7 @@ object DimaJoin_alone_stream{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      var partition_num:Int = 32
+      var partition_num:Int = 16
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
