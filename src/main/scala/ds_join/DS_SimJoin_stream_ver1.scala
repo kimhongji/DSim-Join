@@ -42,9 +42,8 @@ import scala.collection.mutable
 
 
 /*check it is partitioner right?*/
-object DS_SimJoin_stream{
-      /* Local function */ 
-  def CalculateH1 ( l: Int, threshold: Double ): Int = {
+object DS_SimJoin_stream_ver1{
+    def CalculateH1 ( l: Int, threshold: Double ): Int = {
     Math.floor ( (1 - threshold) * l / threshold + 0.0001).toInt + 1
   }
 
@@ -246,10 +245,11 @@ object DS_SimJoin_stream{
     }
   }
 
+
   def main(args: Array[String]){
-    
+      
       /*Initialize variable*/
-      var conf = new SparkConf().setAppName("DS_SimJoin_stream")
+      var conf = new SparkConf().setAppName("DS_SimJoin_stream_ver1")
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
       val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
@@ -393,7 +393,7 @@ object DS_SimJoin_stream{
 
       var shashP = new SimilarityHashPartitioner(partition_num, partitionTable)
 
-      /*cache collection*/
+      /*cache collection
 
       var cache_file = sqlContext.read.json(cache_name)
       var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = cache_file.rdd
@@ -407,8 +407,10 @@ object DS_SimJoin_stream{
          LRU_RDD.cache().count()
       }
 
+      */
+
       println("index coll: "+coll_name)
-      println("cache coll: "+cache_name)
+      //println("cache coll: "+cache_name)
       println("sig_index coll: "+db_coll_name)
     
       /* Run DIMA Similarity Join 
@@ -435,10 +437,12 @@ object DS_SimJoin_stream{
           var DB_PRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
           var DB_PRDD_f:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
           var queryIRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
-          var zippedRDD:org.apache.spark.rdd.RDD[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean), Boolean ))] = null
+         // var joinedPRDD_missed:org.apache.spark.rdd.RDD[(Int, String)] = null 
+         // var cogroupedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)], Iterable[((String, String), Boolean)]))] = null
+         // var missedRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
           var missedIPRDD:org.apache.spark.rdd.RDD[(String, String)] = null 
           //var joinedPRDD_missed_total:(org.apache.spark.rdd.RDD[(Int, String)], org.apache.spark.SparkContext) = null
-          var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
+          var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, String)] = null
           var hitquery:org.apache.spark.rdd.RDD[(String, String)] = null
           var hitcache:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
           var hitResult:org.apache.spark.rdd.RDD[(Int, String)] = null
@@ -479,8 +483,7 @@ object DS_SimJoin_stream{
           println("time|ex|queryForIndex : " + (t1 - t0) + " ms")
 
 
-
-          /* Thread */
+          /* Thread 
 
           LRUKeyThread = new Thread(){
               override def run = {
@@ -645,254 +648,19 @@ object DS_SimJoin_stream{
 
             }
           }// CacheThread END 
-
-          HitThread = new Thread(){
-                  /* Local function */ 
-            def CalculateH1_3 ( l: Int, threshold: Double ): Int = {
-              Math.floor ( (1 - threshold) * l / threshold + 0.0001).toInt + 1
-            }
-
-            def segNum3(s: String, n: Int): Int = {
-              val hash = s.hashCode % n
-              //println(s"segNum: " + s.toString + " , " + hash.toString)
-              if (hash >= 0) {
-                hash + 1
-              } else {
-                hash + n + 1
-              }
-            }
-
-            def createInverse3(ss1: String,
-                                           group: Array[(Int, Int)],
-                                           threshold: Double
-                                          ): Array[(String, Int, Int)] = {
-              {
-                val ss = ss1.split(" ").filter(x => x.length > 0)
-                val range = group.filter(
-                  x => (x._1 <= ss.length && x._2 >= ss.length)
-                )
-                val sl = range(range.length-1)._1
-                val H = CalculateH1_3(sl, threshold)
-
-                for (i <- 1 until H + 1) yield {
-                  val s = ss.filter(x => {segNum3(x, H) == i})
-                  if (s.length == 0) {
-                    Tuple3("", i, sl)
-                  } else if (s.length == 1) {
-                    Tuple3(s(0), i, sl)
-                  } else {
-                    Tuple3(s.reduce(_ + " " + _), i, sl)
-                  }
-                }
-              }.toArray
-            }
-
-          def sort4(xs: Array[String]): Array[String] = {
-            if (xs.length <= 1) {
-              xs
-            } else {
-              val pivot = xs(xs.length / 2)
-              Array.concat(
-                sort4(xs filter (pivot >)),
-                xs filter (pivot ==),
-                sort4(xs filter (pivot <))
-              )
-            }
-          }
-
-          def sortByValue3(x: String): String = {
-            sort4(x.split(" ")).reduce(_ + " " + _)
-          }
-          def calculateOverlapBound3(t: Float, xl: Int, yl: Int): Int = {
-            (Math.ceil((t / (t + 1)) * (xl + yl)) + 0.0001).toInt
-          }
-
-  def verify3(x: Array[(Array[Int], Array[Boolean])], // query
-                     y0: ((String, String), Boolean), //index
-                     threshold: Double,
-                     pos: Int, xLength: Int,
-                     multiGroup: Broadcast[Array[(Int, Int)]]
-                    ): Boolean = {
-   // println(s"enter verification, pos: ${pos}, xLength: ${xLength}, yLength: ${yLength}")
     
-
-    var t0 = System.currentTimeMillis
-    val y = createInverse3(sortByValue3(y0._1._1), multiGroup.value, threshold )
-                    .map(x => {
-                      if(x._1.length > 0){
-                      (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-                       }else {
-                      (Array[Int](), Array[Boolean]())
-                      }
-                   })
-    /* y : Array[(Array[Int], Array[Boolean])] */
-    val yLength = y.map(x => x._1.length)
-      .reduce(_ + _)
-    var t1 = System.currentTimeMillis
-
-    //println("time|DIMA|verify2(y, yLength): " + (t1 - t0) + " ms")
-
-    val overlap = calculateOverlapBound3(threshold.asInstanceOf[Float], xLength, yLength)
-
-    var currentOverlap = 0
-    var currentXLength = 0
-    var currentYLength = 0
-    for (i <- 0 until x.length) {
-      var n = 0
-      var m = 0
-      var o = 0
-      while (n < x(i)._1.length && m < y(i)._1.length) {
-        if (x(i)._1(n) == y(i)._1(m)) {
-          o += 1
-          n += 1
-          m += 1
-        } else if (x(i)._1(n) < y(i)._1(m)) {
-          n += 1
-        } else {
-          m += 1
-        }
-      }
-      currentOverlap = o + currentOverlap
-      currentXLength += x(i)._1.length
-      currentYLength += y(i)._1.length
-      val diff = x(i)._1.length + y(i)._1.length - o * 2
-      val Vx = {
-        if (x(i)._2.length == 0) {
-          0
-        } else if (x(i)._2.length == 1 && !x(i)._2(0)) {
-          1
-        } else {
-          2
-        }
-      }
-      val Vy = {
-        if (y(i)._2.length == 0) {
-          0
-        } else if (y(i)._2.length == 1 && !y(i)._2(0)) {
-          1
-        } else {
-          2
-        }
-      }
-      if (i + 1 < pos) {
-        if ( diff < Vx || diff < Vy) {
-          //println(s"diff : ${diff}, Vx :${Vx}, Vy : ${Vy}")
-          //println(s"i:$i, overlap")
-
-          return false
-        }
-      }
-      if (currentOverlap + Math.min((xLength - currentXLength),
-        (yLength - currentYLength)) < overlap) {
-        /*
-        println(s"i:$i, currentOverlap:$currentOverlap, " +
-          s"xLength: $xLength, yLength: $yLength, currentXLength: $currentXLength, " +
-          s"currentYLength: $currentYLength, overlap: $overlap, prune")
-        */
-        return false
-      }
-    }
-    if (currentOverlap >= overlap) {
-      return true
-    } else {
-      //println(s"finalOverlap:$currentOverlap, overlap: $overlap, false")
-    
-      return false
-    }
-  }
-
-  def compareSimilarity3(
-    query: ((Int, String, Array[(Array[Int], Array[Boolean])])
-      , Boolean, Array[Boolean], Boolean, Int),
-    index: ((String, String), Boolean),
-    multiGroup: Broadcast[Array[(Int, Int)]], 
-    threshold: Double): Boolean = {
-
-    val pos = query._5
-    val query_length = query._1._3
-      .map(x => x._1.length)
-      .reduce(_ + _)
-
-
-    if (index._2) { //
-      if (!query._2 && query._3.length > 0 && query._3(0)) {
-          verify3(query._1._3, index, threshold, pos,
-            query_length, multiGroup)
-      } else {
-        false
-      }
-    } else {
-      verify3(query._1._3, index, threshold, pos,
-        query_length, multiGroup)
-    }
-  }
-             override def run = {
-            
-                var t0 = System.currentTimeMillis
-                hit_dima_RDD = zippedRDD.filter(x => (x._2._2 != null))
-                          .filter(s => (compareSimilarity3(s._2._1, s._2._2, multiGroup, threshold)))
-                          .mapValues(x => (x._2)).cache()
-
-                var hitcount = hit_dima_RDD.count
-                println("data|hc|hit data count: " + hitcount )  
-                hit_sum = hit_sum + hitcount
-                var t1 = System.currentTimeMillis
-                println("time|hit|HitThread time: " + (t1 - t0) + " ms")
-             }
-          }
-
-          val missedFuture = Future {
+          */
 
           
-
-          var tt0 = System.currentTimeMillis 
-          var ans1 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean), Boolean ))]()
-          //println("queryForIndex.partitioner: "+queryForIndex.partitioner)    //Hash
-          //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
-            zippedRDD = queryForIndex.zipPartitions(cachedPRDD, true){
-            (leftIter, rightIter) => {
-              val indexSort = sort2(rightIter.toArray) // Array(cache signature)
-              val querySort = sort3(leftIter.toArray)
-              val ilen = indexSort.size
-              val qlen = querySort.size
-              var i = 0
-              var q = 0
-              while(ilen > i && qlen > q){
-                 //println(s" ${q}, ${querySort(q)._1}, ${i}, ${indexSort(i)._1}")
-                if(querySort(q)._1 < indexSort(i)._1){    
-                  ans1 += Tuple2(querySort(q)._1, (querySort(q)._2 , null, false))              
-                  q = q + 1
-                } 
-                else if(querySort(q)._1 > indexSort(i)._1) i =  i + 1
-                else {
-                  //if(compareSimilarity2(querySort(q)._2, indexSort(i)._2, multiGroup, threshold)){
-                      ans1 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(i)._2, true))
-                    //}
-                  i = i + 1
-                 }
-              }
-              ans1.map(x => (x._1, (x._2._1, x._2._2, x._2._3))).iterator
-            }
-          }.cache()
-
-          var zipCount = zippedRDD.count()//.collect().foreach(x => (println(x._2._1._2+" ,, "+x._3._1._2)))
-          println("data|hc|zipCount count: " + zipCount )  
-          var tt1 = System.currentTimeMillis
-          println("time|ex|zippedRDD.mapPartitions: " + (tt1 - tt0) + " ms")
-
-
-          HitThread.start()
-
               /* for miss */
-              var t0 = System.currentTimeMillis
-              var missedRDD = zippedRDD.filter(s => (s._2._2 == null))
+              t0 = System.currentTimeMillis
               
               
               // miss ! co : (sig, ((query), (cache)))
               //var ans2 = mutable.ListBuffer[(Int, (String, String, Boolean))]() //(query sig, (query string, (inverse string, bool))
               var ans2 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean), Boolean ))]()
               //println("missedRDD.partitioner: "+missedRDD.partitioner)    //Hash
-              var mappedMRDD = missedRDD.mapPartitions({ iter =>
+              var mappedMRDD = queryForIndex.mapPartitions({ iter =>
 
                   val client: MongoClient = MongoClient("mongodb://192.168.0.10:27017") //mongos server
                   val database: MongoDatabase = client.getDatabase("amazon")
@@ -904,7 +672,7 @@ object DS_SimJoin_stream{
                   var k = 0
 
                   if(!iter.isEmpty){
-                      var querySort = sort3(iter.map(x => (x._1, x._2._1)).toArray)
+                      var querySort = sort3(iter.toArray)
 
                       for(i <- 0 to querySort.size - 1 ){
                         qlist ::= querySort(i)._1
@@ -948,50 +716,32 @@ object DS_SimJoin_stream{
 
               var resultmiss = mappedMRDD.filter(s => (s._2._3)).count()
               println("data|hc|resultmiss dima(data) : "+resultmiss)
-
-              DB_PRDD = mappedMRDD.filter(x => (frequencyTable.value.getOrElse((x._1, x._2._2._2), 0.toLong) > 1 ))
-                                  .mapValues(x => (x._2))
-
-              var t1 = System.currentTimeMillis
+             
+              t1 = System.currentTimeMillis
               println("time|ex|missedRDD.mapPartitions: " + (t1 - t0) + " ms")
 
-              HitThread.join()
-
-              CacheThread.start()
-              
-              t0 = System.currentTimeMillis
-              var missResult = mappedMRDD.filter(s => (s._2._3)).mapValues(x => (x._2))
-
-              var unionResult = hit_dima_RDD.union(missResult)
-              outputCount = unionResult.count()
-              println("data|hc|outputCount total(data) : "+outputCount)
-
-              t1 = System.currentTimeMillis
-              println("time|union time: " + (t1 - t0) + " ms")
-
-              zippedRDD.unpersist()
+             
               queryForIndex.unpersist()
-              hit_dima_RDD.unpersist()
-          }
+          
 
-          LRUKeyThread.start()
+          //LRUKeyThread.start()
 
-          var ct0 = System.currentTimeMillis
-          val n =Await.result(missedFuture, scala.concurrent.duration.Duration.Inf)
-          var ct1 = System.currentTimeMillis
-          println("time|fu|missedFuture time: " + (ct1 - ct0) + " ms")
 
-          CacheThread.join()
+
+         // 
 
           /* ------- main ------*/
             
           rdd.unpersist()
+
+          
 
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
           println("time|8|latency: " + currStreamTime + " ms")
           latency_sum = latency_sum + currStreamTime
          
+
           streamingIteration = streamingIteration + 1
 
           pppCogTime = ppCogTime

@@ -884,7 +884,7 @@ object DimaJoin2{
       .reduce(_ + _)
     var t1 = System.currentTimeMillis
 
-    println("time|DIMA|verify2(y, yLength): " + (t1 - t0) + " ms")
+    //println("time|DIMA|verify2(y, yLength): " + (t1 - t0) + " ms")
 
     val overlap = calculateOverlapBound2(threshold.asInstanceOf[Float], xLength, yLength)
 
