@@ -321,6 +321,7 @@ object DS_SimJoin_stream_ver2{
 
       var hit_sum:Long = 0
       var query_sum:Long = 0
+      var queryRDD_sum:Long = 0
       var cogroup_query_cache_sum:Long = 0
       var hit_dima_sum:Long = 0
       var inputKeysRDD_sum:Long = 0
@@ -401,7 +402,8 @@ object DS_SimJoin_stream_ver2{
          // var joinedPRDD_missed:org.apache.spark.rdd.RDD[(Int, String)] = null 
          // var cogroupedRDD:org.apache.spark.rdd.RDD[(Int, (Iterable[((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int)], Iterable[((String, String), Boolean)]))] = null
          // var missedRDD:org.apache.spark.rdd.RDD[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = null
-          var missedIPRDD:org.apache.spark.rdd.RDD[(String, String)] = null 
+          var hitedRDD:org.apache.spark.rdd.RDD[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean)))] = null
+         var missedIPRDD:org.apache.spark.rdd.RDD[(String, String)] = null 
           //var joinedPRDD_missed_total:(org.apache.spark.rdd.RDD[(Int, String)], org.apache.spark.SparkContext) = null
           var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, String)] = null
           var hitquery:org.apache.spark.rdd.RDD[(String, String)] = null
@@ -440,17 +442,19 @@ object DS_SimJoin_stream_ver2{
                   .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).partitionBy(shashP), true).cache() //x._2._1 => sig 
 
           //queryForIndex = queryForIndex.partitionBy(shashP)
-          println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
-
+          queryForIndex.count()
+          var t1 = System.currentTimeMillis
+          println("time|Q|build queryRDD: " + (t1 - t0) + " ms")
+          queryRDD_sum = queryRDD_sum + (t1 - t0)
+          
+          t0 = System.currentTimeMillis 
           var cogroupedRDD = queryForIndex.cogroup(cachedPRDD).filter(s => (!s._2._1.isEmpty)).cache() // DATA FORMAT !!!!
           //println("cogroupedRDD debug"+cogroupedRDD.toDebugString )
-          cogroupedRDD.count   
-          //(query signature hascode, ( iter(query sig), iter(cache sig)))   
-                
-          var t1 = System.currentTimeMillis
-
-          println("time|1|cogroup(query ,cache): " + (t1 - t0) + " ms")
+          cogroupedRDD.count  
+          t1 = System.currentTimeMillis
+          println("time|1|cogroup(query ,cache): " + (t1 - t0) + " ms") 
           cogroup_query_cache_sum = cogroup_query_cache_sum + t1 - t0
+
           currCogTime = t1 - t0
 
 
@@ -550,8 +554,8 @@ object DS_SimJoin_stream_ver2{
                   }
 
               }else{
-                if(cachingWindow_th < 10) cachingWindow_th += 1
-                else cachingWindow_th = 10
+                if(cachingWindow_th < 20) cachingWindow_th += 1
+                else cachingWindow_th = 20
                 sCachingWindow = cachingWindow_th
               }
               //end load balancing
@@ -637,13 +641,11 @@ object DS_SimJoin_stream_ver2{
             override def run = {
            /* hit thread start */
                 var t2 = System.currentTimeMillis
-                var hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
+                hitedRDD = cogroupedRDD.filter(s => (!s._2._2.isEmpty))
                   .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
 
-                
-                hitcache = hitedRDD.mapValues(x => (x._2)).cache()               
-
-                hitdimacount = hitcache.count()               
+                             
+                hitdimacount = hitedRDD.count()               
                 
                 var t3 = System.currentTimeMillis
                 //currCogTime = t3 - t2
@@ -734,19 +736,21 @@ object DS_SimJoin_stream_ver2{
                   RemoveListThread.start
   
                   /* join missed data */
-                  var unoinSig = hitcache.union(DB_PRDD) // index signature union
+                  
 
                   var tc1 = System.currentTimeMillis 
 
-                  var cogroupedMISS = queryForIndex.cogroup(unoinSig).flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
-                   cogroupedMISS.cache().count()
-
+                  var cogroupedMISS = missedRDD.cogroup(DB_PRDD).filter( s => (!s._2._2.isEmpty))
+                                    .flatMapValues(pair => for(v <- pair._1.iterator; w <- pair._2.iterator) yield (v, w))
+                  
                   var tc2 = System.currentTimeMillis
                   println("time|5|miss cogroupedMISS :  " + (tc2 - tc1) + " ms") 
 
+                  var unoinCogroup = cogroupedMISS.union(hitedRDD) // index signature union
+
                   t0 = System.currentTimeMillis
                   var ans2 = mutable.ListBuffer[(Int, String, String)]()
-                  var final_result_p  = cogroupedMISS.mapPartitions({ iter => 
+                  var final_result_p  = unoinCogroup.mapPartitions({ iter => 
 
                     iter.filter(x => (compareSimilarity2(x._2._1, x._2._2, multiGroup, threshold)))
                            .map(s => (s._2._1._1._2.hashCode(), s._2._2._1._2))
@@ -859,6 +863,7 @@ object DS_SimJoin_stream_ver2{
       println("\n\n======Streaming average log=====\n")
       println("> total streaming iteration : "+streamingIteration)
       println("data|query_sum: " + query_sum/streamingIteration)
+      println("time|build queryRDD_sum: "+queryRDD_sum/streamingIteration+" ms")
       println("time|cogroup_query_cache_sum: "+cogroup_query_cache_sum/streamingIteration+" ms")   
       println("data|hit sum: " + hit_sum/streamingIteration)
       println("time|hit_dima_sum: "+hit_dima_sum/streamingIteration+" ms")

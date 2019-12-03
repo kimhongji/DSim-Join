@@ -346,6 +346,7 @@ object DS_SimJoin_stream_ver1{
 
       var hit_sum:Long = 0
       var query_sum:Long = 0
+      var queryRDD_sum:Long = 0
       var cogroup_query_cache_sum:Long = 0
       var hit_dima_sum:Long = 0
       var inputKeysRDD_sum:Long = 0
@@ -426,7 +427,7 @@ object DS_SimJoin_stream_ver1{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streamingIteration > 500 )   ssc.stop()
+              if(streaming_data_all > 2000 )   ssc.stop()
             }
           }// EndCondition END
 
@@ -481,6 +482,7 @@ object DS_SimJoin_stream_ver1{
 
           var t1= System.currentTimeMillis
           println("time|ex|queryForIndex : " + (t1 - t0) + " ms")
+          queryRDD_sum = queryRDD_sum + (t1 - t0)
 
           
               /* for miss */
@@ -526,8 +528,6 @@ object DS_SimJoin_stream_ver1{
                           if(querySort(q)._1.toInt == indexSort(k)._1.toInt){
                             if(compareSimilarity2(querySort(q)._2, indexSort(k)._2, multiGroup, threshold)){
                               ans2 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(k)._2, true))
-                            }else{
-                              ans2 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(k)._2, false))
                             }
                             k = k + 1
                           }else if(querySort(q)._1.toInt < indexSort(k)._1.toInt ){
@@ -545,11 +545,13 @@ object DS_SimJoin_stream_ver1{
               }, preservesPartitioning = true)
               //println("mappedMRDD.partitioner: "+mappedMRDD.partitioner)    //Hash
 
-              var resultmiss = mappedMRDD.filter(s => (s._2._3)).count()
+              var resultmiss = mappedMRDD.count()
+              outputCount = resultmiss
               println("data|hc|resultmiss dima(data) : "+resultmiss)
              
               t1 = System.currentTimeMillis
               println("time|ex|missedRDD.mapPartitions: " + (t1 - t0) + " ms")
+              query_mapParition_sum = query_mapParition_sum + (t1 - t0)
 
              
               queryForIndex.unpersist()
@@ -611,6 +613,7 @@ object DS_SimJoin_stream_ver1{
       println("\n\n======Streaming average log=====\n")
       println("> total streaming iteration : "+streamingIteration)
       println("data|query_sum: " + query_sum/streamingIteration)
+      println("time|build queryRDD_sum: "+queryRDD_sum/streamingIteration+" ms")
       println("time|cogroup_query_cache_sum: "+cogroup_query_cache_sum/streamingIteration+" ms")   
       println("data|hit sum: " + hit_sum/streamingIteration)
       println("time|hit_dima_sum: "+hit_dima_sum/streamingIteration+" ms")
