@@ -427,7 +427,7 @@ object DS_SimJoin_stream_ver1{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streaming_data_all > 2000 )   ssc.stop()
+              if(streaming_data_all > 5000 )   ssc.stop()
             }
           }// EndCondition END
 
@@ -477,7 +477,7 @@ object DS_SimJoin_stream_ver1{
                   .flatMapValues(x => x)
                   .map(x => { ((x._1._1, x._1._2, x._2._1), x._2._2)})
                   .flatMapValues(x => x)
-                  .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).partitionBy(shashP), true) //x._2._1 => sig 
+                  .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).partitionBy(shashP), true).cache() //x._2._1 => sig 
           queryForIndex.count()
 
           var t1= System.currentTimeMillis
