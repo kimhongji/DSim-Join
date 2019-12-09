@@ -690,9 +690,9 @@ object DimaJoin_alone_stream{
     val stream = ssc.socketTextStream("192.168.0.15", 9999)
 
     val data_num = args(0).toString
-    val coll_name = "mongodb://192.168.0.10:27017/amazon.SF_"+data_num+"k"
+    val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
     println("index coll: "+coll_name)
-    println("query coll: mongodb://192.168.0.10:27017/amazon.SF_1k")
+    println("query coll: mongodb://192.168.0.10:27018/amazon.SF_1k")
 
     //index collection
     val readConfig = ReadConfig(Map(

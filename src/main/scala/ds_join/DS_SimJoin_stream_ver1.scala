@@ -363,7 +363,7 @@ object DS_SimJoin_stream_ver1{
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
       val db_coll_name = "SF_sig"+data_num+"k"
-      val coll_name = "mongodb://192.168.0.10:27017/amazon.SF_"+data_num+"k"
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
       val cache_name = "/home/user/Desktop/hongji/ref/SF_sig1k.json"   
       var qlist = List[Int]()
 
@@ -455,9 +455,10 @@ object DS_SimJoin_stream_ver1{
           println("\n\nStart|Stream num: " + streamingIteration)
        
           var input_file = sqlContext.read.json(rdd)
-          var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.rdd
+          var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("reviewText").rdd
           // rows.collect().foreach(println)
-          var queryRDD = rows.map( x => (x(3).toString, x(3).toString)).filter(s => !s._1.isEmpty)//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
+          var k0 =System.currentTimeMillis
+          var queryRDD = rows.map( x => (x(0).toString, x(0).toString)).filter(s => !s._1.isEmpty)//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
           if(queryRDD.isEmpty) println("queryRDD.isEmpty")
           val query_hashRDD = queryRDD.map(x => (x._1.hashCode(), x._1))
           
@@ -465,6 +466,9 @@ object DS_SimJoin_stream_ver1{
 
           println("data|qc|query_count : " + query_count)
           query_sum = query_sum + query_count
+
+          var k1 =System.currentTimeMillis
+          println("time|query count: " + (k1 - k0) + " ms")
 
           var t0 = System.currentTimeMillis 
           
@@ -495,7 +499,7 @@ object DS_SimJoin_stream_ver1{
               //println("missedRDD.partitioner: "+missedRDD.partitioner)    //Hash
               var mappedMRDD = queryForIndex.mapPartitions({ iter =>
 
-                  val client: MongoClient = MongoClient("mongodb://192.168.0.10:27017") //mongos server
+                  val client: MongoClient = MongoClient("mongodb://192.168.0.10:27018") //mongos server
                   val database: MongoDatabase = client.getDatabase("amazon")
                   val collection: MongoCollection[Document] = database.getCollection(db_coll_name)
 
