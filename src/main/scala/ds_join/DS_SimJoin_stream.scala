@@ -455,7 +455,7 @@ object DS_SimJoin_stream{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streaming_data_all > 5000 )   ssc.stop()
+              if(streaming_data_all > 50000 )   ssc.stop()
             }
           }// EndCondition END
 
@@ -487,6 +487,7 @@ object DS_SimJoin_stream{
           if(queryRDD.isEmpty) println("queryRDD.isEmpty")
           val query_hashRDD = queryRDD.map(x => (x._1.hashCode(), x._1))
           
+          queryRDD = queryRDD.cache()
           query_count = queryRDD.count()
 
           println("data|qc|query_count : " + query_count)
@@ -564,6 +565,8 @@ object DS_SimJoin_stream{
           var t1= System.currentTimeMillis
           println("time|ex|queryForIndex : " + (t1 - t0) + " ms")
           queryRDD_sum = queryRDD_sum + (t1 - t0)
+
+          queryRDD.unpersist()
 
           /* Thread */
 
@@ -656,8 +659,8 @@ object DS_SimJoin_stream{
                   }
 
               }else{
-                if(cachingWindow_th < 40) cachingWindow_th += 1
-                else cachingWindow_th = 40
+                if(cachingWindow_th < 50) cachingWindow_th += 1
+                else cachingWindow_th = 50
                 sCachingWindow = cachingWindow_th
               }
               //end load balancing
@@ -718,6 +721,7 @@ object DS_SimJoin_stream{
                       ans1 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(i)._2, true))
                    // }
                   i = i + 1
+                  //q = q + 1
                  }
               }
               ans1.map(x => (x._1, (x._2._1, x._2._2, x._2._3))).iterator
@@ -871,6 +875,7 @@ object DS_SimJoin_stream{
           /* ------- main ------*/
             
           rdd.unpersist()
+
           //DB_PRDD.unpersist()
 
           val tEnd = System.currentTimeMillis
@@ -917,7 +922,7 @@ object DS_SimJoin_stream{
       var end_total = System.currentTimeMillis
       var total_time = end_total - start_total
 
-      println("\n\n======Streaming average log=====\n")
+      println("\n\n======(DS)Streaming average log=====\n")
       println("> total streaming iteration : "+streamingIteration)
       println("data|query_sum: " + query_sum/streamingIteration)
       println("time|build queryRDD_sum: "+queryRDD_sum/streamingIteration+" ms")

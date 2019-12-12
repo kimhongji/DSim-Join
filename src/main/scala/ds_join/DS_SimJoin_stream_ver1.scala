@@ -427,7 +427,7 @@ object DS_SimJoin_stream_ver1{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streaming_data_all > 5000 )   ssc.stop()
+              if(streaming_data_all > 50000 )   ssc.stop()
             }
           }// EndCondition END
 
@@ -555,6 +555,7 @@ object DS_SimJoin_stream_ver1{
              
               t1 = System.currentTimeMillis
               println("time|ex|missedRDD.mapPartitions: " + (t1 - t0) + " ms")
+
               query_mapParition_sum = query_mapParition_sum + (t1 - t0)
 
              
@@ -614,7 +615,7 @@ object DS_SimJoin_stream_ver1{
       var end_total = System.currentTimeMillis
       var total_time = end_total - start_total
 
-      println("\n\n======Streaming average log=====\n")
+      println("\n\n======(ver1)Streaming average log=====\n")
       println("> total streaming iteration : "+streamingIteration)
       println("data|query_sum: " + query_sum/streamingIteration)
       println("time|build queryRDD_sum: "+queryRDD_sum/streamingIteration+" ms")
