@@ -483,7 +483,7 @@ object DS_SimJoin_stream{
           var input_file = sqlContext.read.json(rdd)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("reviewText").rdd
           // rows.collect().foreach(println)
-          var queryRDD = rows.map( x => (x(0).toString, x(0).toString)).filter(s => !s._1.isEmpty)//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
+          var queryRDD = rows.map( x => (x(0).toString, x(0).toString))//.filter(s => !s._1.isEmpty)//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
           if(queryRDD.isEmpty) println("queryRDD.isEmpty")
           val query_hashRDD = queryRDD.map(x => (x._1.hashCode(), x._1))
           
@@ -504,6 +504,8 @@ object DS_SimJoin_stream{
 
               var t0 = System.currentTimeMillis
               //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
+
+
               //println("DB_PRDD.partitioner: "+DB_PRDD.partitioner)    //Hash
               if(enableCacheCleaningFunction_th == false){// disable cache cleaning
                   cacheTmp = cachedPRDD.union(DB_PRDD)//.filter( f => (frequencyTable_filter.getOrElse((f._1, f._2._2), 0.toLong) > 1))
@@ -659,8 +661,8 @@ object DS_SimJoin_stream{
                   }
 
               }else{
-                if(cachingWindow_th < 50) cachingWindow_th += 1
-                else cachingWindow_th = 50
+                if(cachingWindow_th < 40) cachingWindow_th += 1
+                else cachingWindow_th = 40
                 sCachingWindow = cachingWindow_th
               }
               //end load balancing
@@ -833,7 +835,7 @@ object DS_SimJoin_stream{
               var resultmiss = mappedMRDD.filter(s => (s._2._3)).count()
               println("data|hc|resultmiss dima(data) : "+resultmiss)
 
-              DB_PRDD = mappedMRDD.mapValues(x => (x._2)).cache()//.filter(x => (frequencyTable.value.getOrElse((x._1, x._2._2._2), 0.toLong) > 1 )).mapValues(x => (x._2))
+              DB_PRDD = mappedMRDD.mapValues(x => (x._2)).filter(x => (frequencyTable.value.getOrElse((x._1, x._2._2), 0.toLong) < 50 )).cache()
               var DB_get = DB_PRDD.count
               println("data|hc|DB_get data : "+ DB_get)
               DB_get_sum = DB_get_sum + DB_get

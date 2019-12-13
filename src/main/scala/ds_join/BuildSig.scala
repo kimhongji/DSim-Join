@@ -299,6 +299,13 @@ object BuildSig{
       .filter(x => x._2 > 1) // we should change 0 to 2
       .persist()
 
+     // f.collect().foreach(println)
+     /*
+      println("frequency")
+      f.map(x => (x._2, 1)).reduceByKey(_+_).collect().foreach(x => println(x._1))
+      println("count")
+      f.map(x => (x._2, 1)).reduceByKey(_+_).collect().foreach(x => println(x._2))
+      */
 
     //f, multiGroup, minimum 
   }

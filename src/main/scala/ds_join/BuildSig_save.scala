@@ -51,15 +51,16 @@ object BuildSig_save{
 
       var index = buildIndexSig._1
 
-      var saveIndex = index.map(x =>
-            (x._1, x._2._1._1, x._2._1._2, x._2._2)).distinct().cache()
+      //var saveIndex = index.map(x =>
+      //      (x._1, x._2._1._1, x._2._1._2, x._2._2)).distinct().cache()
       /* save to mongo DB */
+      /*
       
       var paralIndex = saveIndex.map(x => { 
                             new Document().append("signature", x._1).append("inverse", x._2).append("raw", x._3).append("isDel", x._4) 
                           })
       paralIndex.saveToMongoDB(WriteConfig(Map("spark.mongodb.output.uri" -> save_coll_name)))
-      
+      */
 
       /* save to file 
       
@@ -77,7 +78,7 @@ object BuildSig_save{
        }
        writer2.close()
 */
-       saveIndex.unpersist()
+      // saveIndex.unpersist()
 
          
 
