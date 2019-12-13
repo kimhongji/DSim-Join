@@ -42,7 +42,7 @@ object DimaJoin_alone_stream{
 
   val table_name = "table-name"
   val index_name = "index-name"
-  val numPartitions = 4
+  val numPartitions = 16
   val threshold:Double = 0.8
   val alpha = 0.95
   val topDegree = 0
@@ -684,15 +684,15 @@ object DimaJoin_alone_stream{
 
     
     val conf = new SparkConf().setAppName("DimaJoin_alone_stream")
-    val sc = new SparkContext(conf)
+    var sc = new SparkContext(conf)
     var sqlContext = new SQLContext(sc)
     val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
-    val stream = ssc.socketTextStream("192.168.0.11", 9999)
+    val stream = ssc.socketTextStream("192.168.0.15", 9999)
 
     val data_num = args(0).toString
-    val coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_"+data_num
+    val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
     println("index coll: "+coll_name)
-    println("query coll: mongodb://192.168.0.11:27017/REVIEW.musical_100")
+    println("query coll: mongodb://192.168.0.10:27018/amazon.SF_1k")
 
     //index collection
     val readConfig = ReadConfig(Map(
@@ -700,20 +700,44 @@ object DimaJoin_alone_stream{
       "spark.mongodb.input.readPreference.name" -> "primaryPreferred"      
       ))
 
-    //query collection
-    val query_readConfig = ReadConfig(Map(
-      "spark.mongodb.input.uri" -> "mongodb://192.168.0.11:27017/REVIEW.musical_100", 
-      "spark.mongodb.input.readPreference.name" -> "primaryPreferred" 
-      ))
 
+    val tStart1 = System.currentTimeMillis
     val load = MongoSpark.load(sc,readConfig)
     val preRDD = load.map( x => x.getString("reviewText"))
     val dataRDD = preRDD.map(x => (x,x))
 
-    val query_load = MongoSpark.load(sc,query_readConfig)
-    val query_preRDD = query_load.map( x => x.getString("reviewText"))
-    //val queryRDD = query_preRDD.map(x => (x,x))
+    val buildIndexSig = BuildSig.main(sc, dataRDD, numPartitions) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
+    val index = buildIndexSig._1
+    val frequencyTable =  sc.broadcast(buildIndexSig._2.collectAsMap())
+    val multiGroup = buildIndexSig._3
+    val minimum = buildIndexSig._5
+    val partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)    
 
+    sc = buildIndexSig._4
+
+    val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
+    
+
+    val indexed = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
+        val data = iter.toArray
+        val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum, alpha, numPartitions)
+          Array(IPartition(partitionId, index, data
+            map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
+                  createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
+                .map(x => {
+                  if (x._1.length > 0) {
+                    (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
+                  } else {
+                    (Array[Int](), Array[Boolean]())
+                  }
+                                })), x._2._2)))).iterator
+            }).persist(StorageLevel.MEMORY_AND_DISK_SER)
+
+   indexed.count
+   val indexRDD = indexed
+   val tEnd1 = System.currentTimeMillis
+   println("time|1|build indexRDD: " + (tEnd1 - tStart1) + " ms")
+   
     /* 
 
     FOR INDEX DATA RDD
@@ -729,93 +753,7 @@ object DimaJoin_alone_stream{
 
           var input_file = sqlContext.read.json(query)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.rdd
-          val queryRDD = rows.map( x => (x(1).toString, x(1).toString)).filter(s => !s._1.isEmpty)
-
-            //val queryRDD = query.map(x => (x,x))
-
-            val tStart1 = System.currentTimeMillis
-            val rdd = dataRDD.map(x => (x._1.toString.split(" "), x._2))
-
-            val rdd1 = rdd.map(x => x._1.length).persist(StorageLevel.DISK_ONLY)
-            val minimum = sc.broadcast(rdd1.min())
-            val maximum = sc.broadcast(rdd1.max())
-            val count = sc.broadcast(rdd1.count())
-            rdd1.unpersist()
-            //val average = rdd1.sum() / count.value
-
-            val multiGroup = sc.broadcast(multigroup(minimum.value, maximum.value, threshold, alpha))
-
-            val inverseRDD = dataRDD
-              .map(x => {
-               // println(s"inverseRDD = dataRDD : " + x._1.toString + " , " + x._2 )
-                (sortByValue(x._1.toString),x._2) 
-              })
-
-            val splittedRecord = inverseRDD
-              .map(x => {
-                //println(s"splittedRecord_1 = inverseRDD: (" + x._1 + " , " + x._2  +")" )
-                ((x._1, x._2), createInverse(x._1, multiGroup.value, threshold))
-              })
-              .flatMapValues(x => x)
-              .map(x => {
-               // println(s"splittedRecord_2 = inverseRDD: (" + x._1 + " , " + x._2._2 + " , " +  x._2._3 + " , " +  x._2._1  +")")
-                ((x._1, x._2._2, x._2._3), x._2._1)
-              })
-
-            val deletionIndexSig = splittedRecord
-              .filter(x => (x._2.length > 0))
-              .map(x => (x._1, createDeletion(x._2))) // (1,i,l), deletionSubstring
-              .flatMapValues(x => x)
-              .map(x => {
-              //  println(s"deletionIndexSig = splittedRecord: (" + x._2 + ", " + x._1._2 + ", " + x._1._3 + ")   / hashCode : " +  (x._2, x._1._2, x._1._3).hashCode().toString)
-                ((x._2, x._1._2, x._1._3).hashCode(), (x._1._1, true))
-              })
-            // (hashCode, (String, internalrow))
-
-            val segIndexSig = splittedRecord
-              .map(x => {
-                //println(s"segIndexSig = splittedRecord: (" + x._2 + ", " + x._1._2 + ", " + x._1._3 + ")  / hashCode : " +  (x._2, x._1._2, x._1._3).hashCode().toString)
-                ((x._2, x._1._2, x._1._3).hashCode(), (x._1._1, false))
-              })
-
-            val index = deletionIndexSig.union(segIndexSig).persist(StorageLevel.DISK_ONLY)
-
-            val f = index
-              .map(x => {
-                       // println(s"F = Index: (" + x._1 + ", " + x._2._2 + ", "+ ")" ) //x._2._1 is row data
-                ((x._1, x._2._2), 1L)
-              })
-              .reduceByKey(_ + _)
-              .filter(x => x._2 > 2) // we should change 0 to 2
-              .persist()
-
-            val frequencyTable = sc.broadcast(f.collectAsMap())
-
-            var partitionTable = sc.broadcast(Array[(Int, Int)]().toMap)
-   
-            val partitionedRDD = index.partitionBy(new SimilarityHashPartitioner(numPartitions, partitionTable))
-    
-
-            val indexed = partitionedRDD.mapPartitionsWithIndex((partitionId, iter) => {
-              val data = iter.toArray
-              val index = JaccardIndex(data, threshold, frequencyTable, multiGroup, minimum.value, alpha, numPartitions)
-              Array(IPartition(partitionId, index, data
-                .map(x => ((sortByValue(x._2._1._1).hashCode, x._2._1._2, 
-                  createInverse(sortByValue(x._2._1._1), multiGroup.value, threshold)
-                .map(x => {
-                  if (x._1.length > 0) {
-                    (x._1.split(" ").map(s => s.hashCode), Array[Boolean]())
-                  } else {
-                    (Array[Int](), Array[Boolean]())
-                  }
-                                })), x._2._2)))).iterator
-                      }).persist(StorageLevel.MEMORY_AND_DISK_SER)
-           indexed.count
-
-            var indexRDD = indexed
-            val tEnd1 = System.currentTimeMillis
-            println("time|1|build indexRDD: " + (tEnd1 - tStart1) + " ms")
-
+          val queryRDD = rows.map( x => (x(3).toString, x(3).toString)).filter(s => !s._1.isEmpty)
 
           /* 
 
@@ -825,23 +763,18 @@ object DimaJoin_alone_stream{
           val tStart2 = System.currentTimeMillis
            val query_rdd = queryRDD
               .map(x => (sortByValue(x._1), x._2))
-              // .distinct
               .map(x => ((x._1.hashCode, x._2, x._1),
                 partition_r(
-                  x._1, frequencyTable, partitionTable, minimum.value, multiGroup,
+                  x._1, frequencyTable, partitionTable, minimum, multiGroup,
                   threshold, alpha, numPartitions, topDegree
                 )))
               .flatMapValues(x => x)
               .map(x => {
-               // println(s"#query_rdd_1 : (" + x._1._1 + " / " + x._1._2 + " / " + x._1._2 + ")")
-                //for(e <- x._2._2) println(s"  >>qr1: x._2._2 : " + e._1 +","+ e._2+","+e._3.mkString(" ")+","+e._4+","+e._5)
                 ((x._1._1, x._1._2, x._2._1), x._2._2)
               })
               .flatMapValues(x => x)
               .map(x => {
-               // println(s"#query_rdd_2 : (" + x._2._1 + ") ,( " + x._1 + "/ "+  x._2._2 + ",/"+  x._2._3.mkString(" ")+ "/" + x._2._4 + "/" + x._2._2 + ")" )
-                //for(e <- x._1._3) println(s"  >>qr2: x._1._3 : " +e._1.mkString(" ")+ " / "+ e._2.mkString(" "))
-                        (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
+                    (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))
               })
 
             def Has(x : Int, array: Array[Int]): Boolean = {
@@ -855,14 +788,10 @@ object DimaJoin_alone_stream{
 
             val partitionLoad = query_rdd
               .mapPartitions({iter =>
-                println("ooooing?22")
-                //println("distr : "+distribute.mkString(","))
                 Array(distribute.clone()).iterator
               }).collect().reduce((a, b) => {
-                println("ooooing?")
                 val r = ArrayBuffer[Long]()
                 for (i <- 0 until numPartitions) {
-                  println("a(i)"+a(i).toString+",  b(i)"+b(i).toString)
                   r += (a(i) + b(i))
                 }
                 r.toArray.map(x => (x/numPartitions) * 8) // for to integer?
@@ -885,7 +814,6 @@ object DimaJoin_alone_stream{
               result.toArray
             })
 
-            println("maxPartitionId: "+maxPartitionId.value.mkString(","))
 
             val extraIndex = sc.broadcast(
               indexRDD.mapPartitionsWithIndex((Index, iter) => {

@@ -17,9 +17,10 @@ import org.apache.spark.sql.SparkSession
 
 import scala.collection.mutable
 
-import org.json4s.native.JsonMethods._
+//import org.json4s.native.JsonMethods._
 import org.json4s.JsonDSL.WithDouble._
 import org.json4s.jackson.JsonMethods._
+import java.io._
 // ./bin/spark-shell --packages org.mongodb.scala:mongo-scala-driver_2.11:2.0.0 org.mongodb.scala:mongo-scala-bson_2.11:2.0.0 org.mongodb:bson.0.0/home/user/Desktop/hongji/Dima_Ds_join/target/scala-2.11/Dima-DS-assembly-1.0.jar
 
 object BuildSig_save{
@@ -31,8 +32,10 @@ object BuildSig_save{
       val sc = new SparkContext(conf)
 
       val data_num = args(0).toString
-      val coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_"+data_num 
-      val save_coll_name = "mongodb://192.168.0.11:27017/REVIEW.musical_sig"+data_num 
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
+      println(coll_name) 
+      val save_coll_name = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k2"  
+      println(save_coll_name) 
 
       val readConfig = ReadConfig(Map(
         "spark.mongodb.input.uri" -> coll_name,
@@ -41,32 +44,43 @@ object BuildSig_save{
 
       val load = MongoSpark.load(sc,readConfig)
       val preRDD = load.map( x => x.getString("reviewText"))
-      val dataRDD = preRDD.map(x => (x,x))
 
-      var buildIndexSig = BuildSig.main(sc, dataRDD, 4) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
+      val dataRDD = preRDD.map(x => (x,x))//.filter(s => (s._1.length() > 50))
+
+      var buildIndexSig = BuildSig.main(sc, dataRDD, 16) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
 
       var index = buildIndexSig._1
 
-      var saveIndex = index.map(x =>
-            (x._1, x._2._1._1, x._2._1._2, x._2._2))
-
+      //var saveIndex = index.map(x =>
+      //      (x._1, x._2._1._1, x._2._1._2, x._2._2)).distinct().cache()
+      /* save to mongo DB */
+      /*
+      
       var paralIndex = saveIndex.map(x => { 
                             new Document().append("signature", x._1).append("inverse", x._2).append("raw", x._3).append("isDel", x._4) 
                           })
       paralIndex.saveToMongoDB(WriteConfig(Map("spark.mongodb.output.uri" -> save_coll_name)))
-     
-/*
-      val mongoClient:MongoClient = MongoClient("mongodb://192.168.0.11:27017")
-      val database: MongoDatabase = mongoClient.getDatabase("REVIEW")
-      val collection:MongoCollection[Document] = database.getCollection("musical_test")
+      */
 
-      var doc:Array[(Document)] = Array()
+      /* save to file 
+      
+      val indexcoll2 = saveIndex.collect()
+      val writer2 = new PrintWriter(new File("/home/user/Desktop/hongji/ref/SF_sig100k(2).json"))
+      for(x <- indexcoll2){
+        var json = 
+             ("signature" -> x._1) ~   
+             ("inverse" -> x._2) ~
+             ("raw" -> x._3) ~
+             ("isDel" -> x._4)
 
-      val documents = index.map( i => Document("signature"->i._1.toInt, "inverse"-> i._2._1._1, "raw" -> i._2._1._2, "isDel" -> i._2._2))
-      collection.insertMany(documents)
-
-      mongoClient.close
+        val print = compact(render(json))
+        writer2.write(print+"\n")
+       }
+       writer2.close()
 */
+      // saveIndex.unpersist()
+
+         
 
 /*
       
@@ -128,13 +142,7 @@ object BuildSig_save{
   index.unpersist()
   writer.close()
 
-  val indexcoll2 = data.collect()
-  val writer2 = new PrintWriter(new File("./query_string"))
-   for(x <- indexcoll2){
-    var json = x._2.toString
-    writer2.write(json+"\n")
-  }
-  writer2.close()
+
 
   for(x <- fcoll){
       var json = 
