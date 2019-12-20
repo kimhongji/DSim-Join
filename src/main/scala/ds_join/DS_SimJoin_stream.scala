@@ -67,6 +67,9 @@ object DS_SimJoin_stream{
       val range = group.filter(
         x => (x._1 <= ss.length && x._2 >= ss.length)
       )
+
+      
+
       val sl = range(range.length-1)._1
       val H = CalculateH1(sl, threshold)
 
@@ -284,7 +287,7 @@ object DS_SimJoin_stream{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 16
+      val partition_num:Int = 8
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
@@ -483,7 +486,7 @@ object DS_SimJoin_stream{
           var input_file = sqlContext.read.json(rdd)
           var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("reviewText").rdd
           // rows.collect().foreach(println)
-          var queryRDD = rows.map( x => (x(0).toString, x(0).toString))//.filter(s => !s._1.isEmpty)//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
+          var queryRDD = rows.map( x => (x(0).toString, x(0).toString)).filter(s => (s._1.length > 10))//.filter(s => !s._1.isEmpty)//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
           if(queryRDD.isEmpty) println("queryRDD.isEmpty")
           val query_hashRDD = queryRDD.map(x => (x._1.hashCode(), x._1))
           
@@ -620,7 +623,7 @@ object DS_SimJoin_stream{
 
                 RemoveListThread.start()
               }
-          } //LRUKeyThread END
+          } //LRUKeyThread END`
           
           RemoveListThread = new Thread(){
             override def run = {
@@ -643,26 +646,22 @@ object DS_SimJoin_stream{
               var k = 1
 
               //start load balancing
-              if(streamingIteration_th > 1000000){ // 5 is random value
-                  if( hit_Count > querysig_Count * 0.8 || hit_Count < querysig_Count * 0.2 ) k = 2
-                  else k = 1 
+              if(streamingIteration_th > 30 ){ // 5 is random value
+                
 
-                  if( hit_Count < querysig_Count * 0.4){
-                      cachingWindow_th += k  
-
-                  }else if( hit_Count > querysig_Count * 0.5 ){
-                      cachingWindow_th -= k    
-                  }
-                  // else : keep cachingWindow
-                  
+                if(query_Count < 30 ) cachingWindow_th = 50
+                else if( query_Count > 50 && query_Count < 150) cachingWindow_th = 40
+                else if(query_Count > 150 )  cachingWindow_th = 30
 
                   if(cachingWindow_th < 0){
                       cachingWindow_th = 1
                   }
 
+                sCachingWindow = cachingWindow_th
+
               }else{
-                if(cachingWindow_th < 40) cachingWindow_th += 1
-                else cachingWindow_th = 40
+                cachingWindow_th += 1
+
                 sCachingWindow = cachingWindow_th
               }
               //end load balancing
@@ -705,6 +704,7 @@ object DS_SimJoin_stream{
               val querySort = sort3(leftIter.toArray)
               val ilen = indexSort.size
               val qlen = querySort.size
+              println(s"qlent : ${qlen} , ilen : ${ilen}")
               var i = 0
               var q = 0
               while(ilen > i && qlen > q){
@@ -807,7 +807,7 @@ object DS_SimJoin_stream{
                        // dbData.foreach(x => print(x._1+","))
 
                         val indexSort = sort2(dbData)
-                     //   println(s"querySort size : ${querySort.size}")
+                        println(s"querySort size : ${querySort.size}")
                         while(indexSort.size > k && querySort.size > q){
                           //println(s" ${q}, ${querySort(q)._1}, ${k}, ${indexSort(k)._1}")
                          if(q > 0 && querySort(q)._1 == querySort(q-1)._1){

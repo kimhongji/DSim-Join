@@ -11,12 +11,12 @@ class SimilarityRDD[U: ClassTag](prev: RDD[U], preservesPartitioning: Boolean) e
   val nodeIPs = Array (
     "user-17",
     "user-19",
-    "user-231",
+    //"user-231",
     "user-243",
-    "user-234",
-    "user-244",
-    "user-232",
-    "user-238"
+    //"user-234",
+    "user-244"
+    //"user-232",
+    //"user-233"
   )
   override def getPreferredLocations(split: Partition): Seq[String] =
     Seq(nodeIPs(split.index % nodeIPs.length))

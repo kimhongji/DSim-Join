@@ -34,7 +34,7 @@ object BuildSig_save{
       val data_num = args(0).toString
       val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
       println(coll_name) 
-      val save_coll_name = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k2"  
+      val save_coll_name = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k"  
       println(save_coll_name) 
 
       val readConfig = ReadConfig(Map(
@@ -45,17 +45,19 @@ object BuildSig_save{
       val load = MongoSpark.load(sc,readConfig)
       val preRDD = load.map( x => x.getString("reviewText"))
 
-      val dataRDD = preRDD.map(x => (x,x))//.filter(s => (s._1.length() > 50))
+      //preRDD.take(3).foreach(x => println("datat : "+x))
 
-      var buildIndexSig = BuildSig.main(sc, dataRDD, 16) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
+      val dataRDD = preRDD.map(x => (x,x))//.filter(s => (s._1.length > 0 ))
+
+      var buildIndexSig = BuildSig.main(sc, dataRDD, 8) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
 
       var index = buildIndexSig._1
 
-      //var saveIndex = index.map(x =>
-      //      (x._1, x._2._1._1, x._2._1._2, x._2._2)).distinct().cache()
+      var saveIndex = index.map(x =>
+            (x._1, x._2._1._1, x._2._1._2, x._2._2))//.distinct()
       /* save to mongo DB */
-      /*
       
+      /*
       var paralIndex = saveIndex.map(x => { 
                             new Document().append("signature", x._1).append("inverse", x._2).append("raw", x._3).append("isDel", x._4) 
                           })
