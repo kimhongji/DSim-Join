@@ -32,7 +32,7 @@ object BuildSig_save{
       val sc = new SparkContext(conf)
 
       val data_num = args(0).toString
-      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k_5"
       println(coll_name) 
       val save_coll_name = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k"  
       println(save_coll_name) 
@@ -53,7 +53,7 @@ object BuildSig_save{
 
       var index = buildIndexSig._1
 
-      var saveIndex = index.map(x =>
+      var saveIndex = index.map(x =>  
             (x._1, x._2._1._1, x._2._1._2, x._2._2))//.distinct()
       /* save to mongo DB */
       
@@ -63,6 +63,8 @@ object BuildSig_save{
                           })
       paralIndex.saveToMongoDB(WriteConfig(Map("spark.mongodb.output.uri" -> save_coll_name)))
       */
+
+      println("==> finished load ")
 
       /* save to file 
       

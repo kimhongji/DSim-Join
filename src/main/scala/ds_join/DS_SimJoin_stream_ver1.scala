@@ -427,7 +427,7 @@ object DS_SimJoin_stream_ver1{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streaming_data_all > 50000 )   ssc.stop()
+              if(streaming_data_all > 500000 )   ssc.stop()
             }
           }// EndCondition END
 
