@@ -252,7 +252,7 @@ object DS_SimJoin_stream_ver1{
       var conf = new SparkConf().setAppName("DS_SimJoin_stream_ver1")
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
-      val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
+      val ssc = new StreamingContext(sc, Milliseconds(5000)) // 700
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
@@ -263,6 +263,7 @@ object DS_SimJoin_stream_ver1{
       var topDegree = 0
       var hashP = new HashPartitioner(partition_num)
       var streamingIteration = 1
+      var latencyIteration = 1
 
       var cachingWindow = 1
       var pCachingWindow = 1
@@ -570,7 +571,11 @@ object DS_SimJoin_stream_ver1{
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
           println("time|8|latency: " + currStreamTime + " ms")
-          latency_sum = latency_sum + currStreamTime
+          if(( tEnd - start_total) > 600000 ) {
+            println(" + latency ")
+            latency_sum = latency_sum + currStreamTime
+            latencyIteration = latencyIteration + 1
+          }
          
 
           streamingIteration = streamingIteration + 1
@@ -632,7 +637,7 @@ object DS_SimJoin_stream_ver1{
       println("time|cache_time_sum: "+cache_time_sum/streamingIteration+" ms")
       println("time|union_sum: "+union_sum/streamingIteration+" ms")
       println("data|streaming data all: " + streaming_data_all)
-      println("time|latency_sum: "+latency_sum/streamingIteration+" ms")
+      println("time|latency_sum: "+latency_sum/latencyIteration+" ms")
       println("time|total time: "+total_time+" ms")
       println("\n=================================\n")
 

@@ -85,7 +85,7 @@ object DS_SimJoin_stream_ver3{
       }
     }.toArray
   }
-  def sort2(xs: Array[(Int, ((String, String), Boolean, Long))]): Array[(Int, ((String, String), Boolean, Long))] = {
+  def sort2(xs: Array[(Int, ((String, String), Boolean, Long, Long))]): Array[(Int, ((String, String), Boolean, Long, Long))] = {
     if (xs.length <= 1) {
       xs
     } else {
@@ -109,6 +109,18 @@ object DS_SimJoin_stream_ver3{
       )
     }
   }
+  def sort4(xs: Array[(Long,(Int, ((String, String), Boolean, Long, Long)))]): Array[(Long,(Int, ((String, String), Boolean, Long, Long)))] = {
+    if (xs.length <= 1) {
+      xs
+    } else {
+      val pivot = xs(xs.length / 2)
+      Array.concat(
+        sort4(xs.filter(s => (pivot._1 > s._1))),
+        xs.filter(s => (pivot._1 == s._1)),
+        sort4(xs.filter(s => (pivot._1 < s._1)))
+      )
+    }
+  }  
   def sort(xs: Array[String]): Array[String] = {
     if (xs.length <= 1) {
       xs
@@ -130,7 +142,7 @@ object DS_SimJoin_stream_ver3{
   }
 
   def verify2(x: Array[(Array[Int], Array[Boolean])], // query
-                     y0: ((String, String), Boolean, Long), //index
+                     y0: ((String, String), Boolean, Long, Long), //index
                      threshold: Double,
                      pos: Int, xLength: Int,
                      multiGroup: Broadcast[Array[(Int, Int)]]
@@ -226,7 +238,7 @@ object DS_SimJoin_stream_ver3{
   def compareSimilarity2(
     query: ((Int, String, Array[(Array[Int], Array[Boolean])])
       , Boolean, Array[Boolean], Boolean, Int),
-    index: ((String, String), Boolean, Long),
+    index: ((String, String), Boolean, Long, Long),
     multiGroup: Broadcast[Array[(Int, Int)]], 
     threshold: Double): Boolean = {
 
@@ -266,6 +278,7 @@ object DS_SimJoin_stream_ver3{
       var topDegree = 0
       var hashP = new HashPartitioner(partition_num)
       var streamingIteration = 1
+      var latencyIteration = 1
 
       var cachingWindow = 1
       var pCachingWindow = 1
@@ -310,7 +323,7 @@ object DS_SimJoin_stream_ver3{
       var ppMissedKeysCount: Long = 0
 
      // var queryRDD:org.apache.spark.rdd.RDD[(String, String)] = null
-      var cacheTmp: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long))] = null    // for cache update
+      var cacheTmp: org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long, Long))] = null    // for cache update // signature, query cost, verify cost
 
       var LRU_RDD: org.apache.spark.rdd.RDD[(Int, Int)] = null
       var LRU_Tmp: org.apache.spark.rdd.RDD[(Int, Int)] = null      // for LRUKey update
@@ -321,9 +334,9 @@ object DS_SimJoin_stream_ver3{
       var time_all = 0
 
       /* FOR thread */
-      var DB_PRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long))] = null
+      var DB_PRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long, Long))] = null
       var removeList: org.apache.spark.rdd.RDD[(Int, Int)] = null
-      var cachedPRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long))] = null // (signature, ((inverse, origin), bool , query time))
+      var cachedPRDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long, Long))] = null // (signature, ((inverse, origin), bool , query time, verify time))
       //var index:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean))] = null
 
       var multiGroup:Broadcast[Array[(Int, Int)]] = null
@@ -365,8 +378,8 @@ object DS_SimJoin_stream_ver3{
       var latency_sum:Long = 0
       var union_sum:Long = 0
 
-      var hitstart:Long = 0
-      var hitend:Long = 0
+      var hit_time:Long = 0
+      var miss_time:Long = 0
 
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
@@ -406,7 +419,7 @@ object DS_SimJoin_stream_ver3{
 
       var cache_file = sqlContext.read.json(cache_name)
       var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = cache_file.rdd
-      cachedPRDD = rows.map( x => (x(4).asInstanceOf[Long].intValue(),((x(1).toString,x(3).toString), x(2).toString.toBoolean, 11))) // 100 is initial data( random )
+      cachedPRDD = rows.map( x => (x(4).asInstanceOf[Long].intValue(),((x(1).toString,x(3).toString), x(2).toString.toBoolean, 5, 5))) // 100 is initial data( random )
       cachedPRDD = new SimilarityRDD(cachedPRDD.partitionBy(shashP), true).cache()
             
       
@@ -444,8 +457,8 @@ object DS_SimJoin_stream_ver3{
 
           val tStart = System.currentTimeMillis
           var compSign = 1
-          var zippedRDD:org.apache.spark.rdd.RDD[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean, Long), Boolean ))] = null
-          var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long))] = null
+          var zippedRDD:org.apache.spark.rdd.RDD[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean, Long, Long), Boolean ))] = null
+          var hit_dima_RDD:org.apache.spark.rdd.RDD[(Int, ((String, String), Boolean, Long, Long))] = null
           var outputCount: Long = 0
 
           println("\n\nStart|Stream num: " + streamingIteration)
@@ -470,31 +483,64 @@ object DS_SimJoin_stream_ver3{
               var isEmpty_missedData_th = isEmpty_missedData // first iter = true
               var frequencyTable_filter = frequencyTableV
               var threshold:Long = 0
-              threshold = 10
+              var removeTop = false
+              var clean = false 
 
-              println("cache|cache threshold : "+threshold)
-
-              //RemoveListThread.join()
+              
 
               var t0 = System.currentTimeMillis
-              //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
 
-
-              //println("DB_PRDD.partitioner: "+DB_PRDD.partitioner)    //Hash
               if(isEmpty_missedData_th == true){
                 cacheTmp = cachedPRDD
               }else{
-                cacheTmp = cachedPRDD.union(DB_PRDD).filter(s => (s._2._3 > threshold))
-                //DB_PRDD.take(1000).foreach(x => println(x._2._3))
+                cacheTmp = cachedPRDD.union(DB_PRDD)
+
               }
 
+              if(hit_time > miss_time ) clean = true
+              else clean = false
+
+              if( clean == true ) { 
+                var diff = hit_time - miss_time
+                println("diff : "+diff)
+                cacheTmp = cacheTmp.mapPartitions({iter =>
+                  var preSort = iter.toArray
+                  var indexSort = sort4(preSort.map(x => (x._2._3, x))).map( x=> (x._2)) // sort by query cost
+                  var ilen = indexSort.size
+                  var i = -1
+                  var query_sum:Long = 0
+                  var xi_sum:Long = 0
+                  while(diff/2 - (query_sum)/2  > xi_sum && ilen > i ){
+                    i += 1
+                    var xi = indexSort(i)
+
+                    var Tquery = xi._2._3
+                    var Txi = xi._2._4
+                    query_sum += Tquery
+                    xi_sum += Txi
+
+                    println(s"Tquery : ${Tquery} , Txi : ${Txi}, query_sum : ${query_sum}, xi_sum : ${xi_sum}")
+                  }
+                  println("i : "+i)
+                  var newIter = indexSort.slice(i, ilen)
+
+                newIter.iterator
+                  
+                }, preservesPartitioning = true)
+
+              }else {
+                cacheTmp = cacheTmp
+              }
+
+
+              println("cache|cache threshold : "+threshold+", clean : "+clean+", removeTop : "+removeTop)
+
+ 
               if(streamingIteration_th % checkoutval == 0){
                 println("=======Localchechpoint======")
                 cacheTmp.localCheckpoint
               }
-              if(streamingIteration_th == 300 ){
-                cacheTmp.collect().foreach(x => print(x._2._3+", "))
-              }
+              
               cachedDataCount = cacheTmp.cache.count // check cache cout
 
               println("data|c|cached count(after union): " + cachedDataCount)  
@@ -539,10 +585,11 @@ object DS_SimJoin_stream_ver3{
 
           CacheThread.join()
 
+          //cachedPRDD.collect().foreach(x => (print(x._2._3+", ")))
+
           var tt0 = System.currentTimeMillis 
-          var ans1 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean, Long), Boolean ))]()
-          //println("queryForIndex.partitioner: "+queryForIndex.partitioner)    //Hash
-          //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
+          var ans1 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean, Long, Long), Boolean ))]()
+          
           zippedRDD = queryForIndex.zipPartitions(cachedPRDD, true){
             (leftIter, rightIter) => {
               val indexSort = sort2(rightIter.toArray) // Array(cache signature)
@@ -553,7 +600,6 @@ object DS_SimJoin_stream_ver3{
               var i = 0
               var q = 0
               while(ilen > i && qlen > q){
-                 //println(s" ${q}, ${querySort(q)._1}, ${i}, ${indexSort(i)._1}")
                 if(q > 0 && querySort(q)._1 == querySort(q-1)._1){
                   q = q +1
                 }else if(querySort(q)._1 < indexSort(i)._1){
@@ -564,33 +610,25 @@ object DS_SimJoin_stream_ver3{
                 }else if(querySort(q)._1 > indexSort(i)._1) { 
                   i =  i + 1
                 }else {
-                 // if(compareSimilarity2(querySort(q)._2, indexSort(i)._2, multiGroup, threshold)){
                       ans1 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(i)._2, true))
-                   // }
                   i = i + 1
-                  //q = q + 1
                  }
               }
               ans1.map(x => (x._1, (x._2._1, x._2._2, x._2._3))).iterator
             }
           }.cache()
-          //var zipcc = zippedRDD.count()
-          //println("data|hc|zipcc (total zip) count: " + zipcc )  
-          var zipCount = zippedRDD.filter(s => (s._2._3)).count()//.collect().foreach(x => (println(x._2._1._2+" ,, "+x._3._1._2)))
+         
+          var zipCount = zippedRDD.filter(s => (s._2._3)).count()
           println("data|hc|zipCount count: " + zipCount )
          
           var tt1 = System.currentTimeMillis
           println("time|ex|zippedRDD.mapPartitions: " + (tt1 - tt0) + " ms")
           cogroup_query_cache_sum = cogroup_query_cache_sum + (tt1 - tt0) 
 
-          var ansHit = mutable.ListBuffer[(Int, ((String, String), Boolean, Long))]()
+          var ansHit = mutable.ListBuffer[(Int, ((String, String), Boolean, Long, Long))]()
           val hitFuture = Future {
                var t0 = System.currentTimeMillis
-               /*
-              hit_dima_RDD = zippedRDD.filter(x => (x._2._2 != null)).mapPartitions({ iter =>
-                iter.filter(s => (compareSimilarity2(s._2._1, s._2._2, multiGroup, threshold)))
-              }).mapValues(x => (x._2)).cache()
-              */
+              /* 
               hit_dima_RDD = zippedRDD.mapPartitions({ iter =>
                 while(iter.hasNext){
                   var i = iter.next
@@ -603,17 +641,19 @@ object DS_SimJoin_stream_ver3{
                 }
                 ansHit.map(x => (x._1, x._2)).iterator
                 }, preservesPartitioning = true).cache()
-              /*
+                */
+              
               hit_dima_RDD = zippedRDD.filter(x => (x._2._2 != null))
                           .filter(s => (compareSimilarity2(s._2._1, s._2._2, multiGroup, threshold)))
                           .mapValues(x => (x._2)).cache()
-              */
+              
               var hitcount = hit_dima_RDD.count
               println("data|hc|hit data count : "+hitcount)
               hit_sum = hit_sum + hitcount
               var t1 = System.currentTimeMillis
               println("time|hit|hitFuture time: " + (t1 - t0) + " ms")   
               hit_dima_sum = hit_dima_sum + (t1 -t0)
+              hit_time = t1 - t0
               hitcount
           }
 
@@ -632,7 +672,7 @@ object DS_SimJoin_stream_ver3{
               
               // miss ! co : (sig, ((query), (cache)))
               //var ans2 = mutable.ListBuffer[(Int, (String, String, Boolean))]() //(query sig, (query string, (inverse string, bool))
-              var ans2 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean, Long), Boolean ))]()
+              var ans2 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean, Long, Long), Boolean ))]()
               //println("missedRDD.partitioner: "+missedRDD.partitioner)    //Hash
               var mappedMRDD = missedRDD.mapPartitions({ iter =>
 
@@ -641,8 +681,7 @@ object DS_SimJoin_stream_ver3{
                   val collection: MongoCollection[Document] = database.getCollection(db_coll_name)
 
                   var qlist = List[Int]()
-                  var dbData:Array[(Int, ((String, String), Boolean, Long))] = Array()
-                  //var querySort:Array[(Int, ((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int))] = Array()
+                  var dbData:Array[(Int, ((String, String), Boolean, Long, Long))] = Array()
                   var q = 0
                   var k = 0
 
@@ -653,7 +692,7 @@ object DS_SimJoin_stream_ver3{
                         qlist ::= querySort(i)._1
                       }
 
-                      //println(s"qlist size : ${qlist.size}")
+                      println(s"qlist size : ${qlist.size}")
                       val t0 = System.currentTimeMillis
                       var query = in("signature", qlist:_*)
                       var temp = collection.find(query) //.map(x => (x.getInteger("signature").toInt,((x.getString("inverse"), x.getString("raw")), x.getBoolean("isDel").toString.toBoolean))) //for Document
@@ -662,27 +701,25 @@ object DS_SimJoin_stream_ver3{
 
                       val t1 = System.currentTimeMillis
                       for(data <- awaited){
-                        dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean, (qlist.size)/(t1-t0)))  
+                        dbData +:= (data.getInteger("signature").toInt,((data.getString("inverse"), data.getString("raw")), data.getBoolean("isDel").toString.toBoolean, (t1-t0)/(qlist.size).toLong, 0.toLong))  
                       }
                       
-                      //println("time|query|query time : " + (t1 - t0) + " ms with qlistsize : "+qlist.size) 
-                      //  println("start search")
-
-                       // dbData.foreach(x => print(x._1+","))
+                      println("time|query|query time : " + (t1 - t0) + " ms with qlistsize : "+qlist.size) 
 
                         val indexSort = sort2(dbData)
-                        println(s"querySort size : ${querySort.size}")
                         while(indexSort.size > k && querySort.size > q){
-                          //println(s" ${q}, ${querySort(q)._1}, ${k}, ${indexSort(k)._1}")
+                          println(s" ${q}, ${querySort(q)._1}, ${k}, ${indexSort(k)._1}")
                          if(q > 0 && querySort(q)._1 == querySort(q-1)._1){
                             q = q + 1
                          }else if(querySort(q)._1.toInt == indexSort(k)._1.toInt){
-                          // insert t0 ( verify start )
-                            if(compareSimilarity2(querySort(q)._2, indexSort(k)._2, multiGroup, threshold)){
-                              // insert t1 ( verify end )
-                              ans2 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(k)._2, true))
+                          
+                            val t2 = System.currentTimeMillis
+                            val check = compareSimilarity2(querySort(q)._2, indexSort(k)._2, multiGroup, threshold)
+                            val t3 = System.currentTimeMillis
+                            if(check == true ){
+                              ans2 += Tuple2(querySort(q)._1, (querySort(q)._2 , ((indexSort(k)._2._1._1, indexSort(k)._2._1._2), indexSort(k)._2._2, indexSort(k)._2._3 , (t3-t2)), true))
                             }else{
-                              ans2 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(k)._2, false))
+                              ans2 += Tuple2(querySort(q)._1, (querySort(q)._2 , ((indexSort(k)._2._1._1, indexSort(k)._2._1._2), indexSort(k)._2._2, indexSort(k)._2._3 , (t3-t2)), false))
                             }
                             k = k + 1
                           }else if(querySort(q)._1.toInt < indexSort(k)._1.toInt ){
@@ -711,6 +748,7 @@ object DS_SimJoin_stream_ver3{
               var t1 = System.currentTimeMillis
               println("time|ex|missedRDD.mapPartitions: " + (t1 - t0) + " ms")
               query_mapParition_sum = query_mapParition_sum +  (t1 - t0)
+              miss_time = (t1 - t0)
               
               t0 = System.currentTimeMillis
               
@@ -749,7 +787,11 @@ object DS_SimJoin_stream_ver3{
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
           println("time|8|latency: " + currStreamTime + " ms")
-          latency_sum = latency_sum + currStreamTime
+          if(( tEnd - start_total) > 600000 ) {
+            println(" + latency ")
+            latency_sum = latency_sum + currStreamTime
+            latencyIteration = latencyIteration + 1
+          }
          
           streamingIteration = streamingIteration + 1
 
@@ -807,7 +849,7 @@ object DS_SimJoin_stream_ver3{
       println("time|cache_time_sum: "+cache_time_sum/streamingIteration+" ms")
       println("time|union_sum: "+union_sum/streamingIteration+" ms")
       println("data|streaming data all: " + streaming_data_all)
-      println("time|latency_sum: "+latency_sum/streamingIteration+" ms")
+      println("time|latency_sum: "+latency_sum/latencyIteration+" ms")
       println("time|total time: "+total_time+" ms")
       println("\n=================================\n")
 

@@ -264,6 +264,7 @@ object DS_SimJoin_stream_ver2{
       var topDegree = 0
       var hashP = new HashPartitioner(partition_num)
       var streamingIteration = 1
+      var latencyIteration = 1
 
       var cachingWindow = 1
       var pCachingWindow = 1
@@ -428,7 +429,7 @@ object DS_SimJoin_stream_ver2{
 
           EndCondition = new Thread(){
             override def run = {
-              if(streaming_data_all > 300000 )   ssc.stop()
+              if(streaming_data_all > 500000 )   ssc.stop()
             }
           }// EndCondition END
 
@@ -637,7 +638,7 @@ object DS_SimJoin_stream_ver2{
 
               }else{
                
-                cachingWindow_th = 40
+                cachingWindow_th = 50
                 sCachingWindow = cachingWindow_th
               }
               //end load balancing
@@ -863,7 +864,11 @@ object DS_SimJoin_stream_ver2{
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
           println("time|8|latency: " + currStreamTime + " ms")
-          latency_sum = latency_sum + currStreamTime
+          if(( tEnd - start_total) > 600000 ) {
+            println(" + latency ")
+            latency_sum = latency_sum + currStreamTime
+            latencyIteration = latencyIteration + 1
+          }
          
           streamingIteration = streamingIteration + 1
 
@@ -921,7 +926,7 @@ object DS_SimJoin_stream_ver2{
       println("time|cache_time_sum: "+cache_time_sum/streamingIteration+" ms")
       println("time|union_sum: "+union_sum/streamingIteration+" ms")
       println("data|streaming data all: " + streaming_data_all)
-      println("time|latency_sum: "+latency_sum/streamingIteration+" ms")
+      println("time|latency_sum: "+latency_sum/latencyIteration+" ms")
       println("time|total time: "+total_time+" ms")
       println("\n=================================\n")
 
