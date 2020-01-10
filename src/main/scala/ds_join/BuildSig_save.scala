@@ -32,9 +32,9 @@ object BuildSig_save{
       val sc = new SparkContext(conf)
 
       val data_num = args(0).toString
-      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k_5"
+      val coll_name = "mongodb://192.168.0.10:27018/dblp.SF_"+data_num+"k"
       println(coll_name) 
-      val save_coll_name = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k"  
+      val save_coll_name = "mongodb://192.168.0.10:27018/dblp.SF_sig"+data_num+"k"  
       println(save_coll_name) 
 
       val readConfig = ReadConfig(Map(
@@ -43,11 +43,11 @@ object BuildSig_save{
        ))
 
       val load = MongoSpark.load(sc,readConfig)
-      val preRDD = load.map( x => x.getString("reviewText"))
+      val preRDD = load.map( x => x.getString("title"))
 
-      //preRDD.take(3).foreach(x => println("datat : "+x))
+      preRDD.take(3).foreach(x => println("datat : "+x))
 
-      val dataRDD = preRDD.map(x => (x,x))//.filter(s => (s._1.length > 0 ))
+      val dataRDD = preRDD.map(x => (x,x))
 
       var buildIndexSig = BuildSig.main(sc, dataRDD, 8) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
 

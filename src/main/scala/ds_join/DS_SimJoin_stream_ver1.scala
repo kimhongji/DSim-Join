@@ -252,7 +252,7 @@ object DS_SimJoin_stream_ver1{
       var conf = new SparkConf().setAppName("DS_SimJoin_stream_ver1")
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
-      val ssc = new StreamingContext(sc, Milliseconds(5000)) // 700
+      val ssc = new StreamingContext(sc, Milliseconds(1000)) // 5000 / sleep 15 
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
@@ -425,14 +425,6 @@ object DS_SimJoin_stream_ver1{
       stream.foreachRDD({ rdd =>
 
         if(!rdd.isEmpty()){
-
-          EndCondition = new Thread(){
-            override def run = {
-              if(streaming_data_all > 500000 )   ssc.stop()
-            }
-          }// EndCondition END
-
-          EndCondition.start
 
           val tStart = System.currentTimeMillis
           var compSign = 1
@@ -609,9 +601,9 @@ object DS_SimJoin_stream_ver1{
           println("data|all|streaming data all: " + streaming_data_all)
 
 
-         // if(!isEmpty_missedData){
-          //  
-          //}
+        if(streaming_data_all > 200000 ){
+            ssc.stop()
+          }
         }
       })
 

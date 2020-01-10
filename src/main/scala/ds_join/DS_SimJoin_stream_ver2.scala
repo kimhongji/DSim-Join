@@ -253,7 +253,7 @@ object DS_SimJoin_stream_ver2{
       var conf = new SparkConf().setAppName("DS_SimJoin_stream_ver2")
       var sc = new SparkContext(conf)
       var sqlContext = new SQLContext(sc)
-      val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
+      val ssc = new StreamingContext(sc, Milliseconds(2000)) //700
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
@@ -262,7 +262,7 @@ object DS_SimJoin_stream_ver2{
       val alpha = 0.95
       var minimum:Int = 0
       var topDegree = 0
-      var hashP = new HashPartitioner(partition_num)
+      var hashP = new HashPartitioner(partition_num )
       var streamingIteration = 1
       var latencyIteration = 1
 
@@ -426,16 +426,6 @@ object DS_SimJoin_stream_ver2{
       stream.foreachRDD({ rdd =>
 
         if(!rdd.isEmpty()){
-
-          EndCondition = new Thread(){
-            override def run = {
-              if(streaming_data_all > 500000 )   ssc.stop()
-            }
-          }// EndCondition END
-
-          EndCondition.start
-
-
 
           val tStart = System.currentTimeMillis
           var compSign = 1
@@ -601,67 +591,71 @@ object DS_SimJoin_stream_ver2{
           RemoveListThread = new Thread(){
             override def run = {
 
-              var t0 = System.currentTimeMillis
+              t0 = System.currentTimeMillis
+
               var delCacheTimeList_th = delCacheTimeList 
               var enableCacheCleaningFunction_th = enableCacheCleaningFunction
               var streamingIteration_th = streamingIteration            
 
               var cachingWindow_th = cachingWindow
+              var currCogTime_th = currCogTime
+              var currDBTime_th = currDBTime
+
+              var pCacheRelatedOpTimeDiff = currCogTime_th - pCogTime + pCacheTime - ppCacheTime
+              var pDBTimeDiff = currDBTime_th - pDBTime
 
               println("data|cwb|caching window size: " + cachingWindow_th)
-
+              
+              var pAll = currCogTime_th + currDBTime_th + pCacheTime
+              var ppAll = pCogTime + pDBTime + ppCacheTime
+              var pppAll = ppCogTime + ppDBTime + pppCacheTime
               var isEmpty_missedData_th = isEmpty_missedData
-
-              var query_Count = query_count        // new query count
-              var querysig_Count = inputKeysRDD_count // new query sig count
-              var cache_Count =  cachedDataCount      // before update
-              var hit_Count = 0            // hit sig count (actually)
-              var k = 1
-
-              //start load balancing
-              if(streamingIteration_th < 0 ){ // 5 is random value
-                  if( hit_Count > querysig_Count * 0.8 || hit_Count < querysig_Count * 0.2 ) k = 2
-                  else k = 1 
-
-                  if( hit_Count < querysig_Count * 0.4){
-                      cachingWindow_th += k  
-
-                  }else if( hit_Count > querysig_Count * 0.5 ){
-                      cachingWindow_th -= k    
-                  }
-                  // else : keep cachingWindow
-                  
-
-                  if(cachingWindow_th < 0){
-                      cachingWindow_th = 1
-                  }
-
-              }else{
-               
-                cachingWindow_th = 50
+              
+              if(isEmpty_missedData_th){
+                cachingWindow_th += 1
+                //cachingWindow_th = streamingIteration_th
                 sCachingWindow = cachingWindow_th
               }
-              //end load balancing
+              else if(streamingIteration_th > 10 ){
+
+                if(pAll > ppAll){
+                  
+                      cachingWindow_th = sCachingWindow
+      
+                }else if(pAll < ppAll){
+
+                  sCachingWindow = cachingWindow_th
+                  
+                  if(currDBTime > currCogTime + pCacheTime){
+
+                    cachingWindow_th += 1
+                                
+                  }else if(currDBTime < currCogTime + pCacheTime && cachingWindow_th > 1){
+
+                    cachingWindow_th -= 1
+                        
+                  }             
+                }
+              }else{
+                cachingWindow_th += 1
+                sCachingWindow = cachingWindow_th
+              }
 
               println("data|cwa|caching window size: " + cachingWindow_th)
-              cwa_sum = cwa_sum + cachingWindow_th
 
-              var threshold_curr = streamingIteration_th - cachingWindow_th // n-c cache window size inc -> threshold dec -> 
+              var threshold_curr = streamingIteration_th - cachingWindow_th
 
               LRUKeyThread.join()
 
-              removeList = LRU_RDD.filter({ s =>  s._2 < threshold_curr  })
-              var removeList_count = removeList.count()
-              println("data|rc|removeList_count: " + removeList_count)
+              //if(streamingIteration_th > 419){
+                removeList = LRU_RDD.filter({ s => s._2 < threshold_curr })
+              //}         
 
               this.synchronized{
                 cachingWindow = cachingWindow_th
               }
-              
-              var t1 = System.currentTimeMillis
-              println("time|L|removeList Thread: " + (t1 - t0) + " ms")
 
-              //CacheThread.start           
+              //CacheThread.start        
 
             }
           } // RemoveListThread END
@@ -712,7 +706,8 @@ object DS_SimJoin_stream_ver2{
          
           var tt1 = System.currentTimeMillis
           println("time|ex|zippedRDD.mapPartitions: " + (tt1 - tt0) + " ms")
-          cogroup_query_cache_sum = cogroup_query_cache_sum + (tt1 - tt0) 
+          cogroup_query_cache_sum = cogroup_query_cache_sum + (tt1 - tt0)
+          currCogTime = tt1 - tt0 
 
           val hitFuture = Future {
                var t0 = System.currentTimeMillis
@@ -827,6 +822,7 @@ object DS_SimJoin_stream_ver2{
               var t1 = System.currentTimeMillis
               println("time|ex|missedRDD.mapPartitions: " + (t1 - t0) + " ms")
               query_mapParition_sum = query_mapParition_sum +  (t1 - t0)
+              currDBTime = t1 - t0
               
               t0 = System.currentTimeMillis
               
@@ -869,7 +865,7 @@ object DS_SimJoin_stream_ver2{
             latency_sum = latency_sum + currStreamTime
             latencyIteration = latencyIteration + 1
           }
-         
+
           streamingIteration = streamingIteration + 1
 
           pppCogTime = ppCogTime
@@ -899,6 +895,10 @@ object DS_SimJoin_stream_ver2{
         
           streaming_data_all = streaming_data_all + outputCount.toInt
           println("data|all|streaming data all: " + streaming_data_all)
+
+          if(streaming_data_all > 300000 ){
+            ssc.stop()
+          }
 
 
         }
