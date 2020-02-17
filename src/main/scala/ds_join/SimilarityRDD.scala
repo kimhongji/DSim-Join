@@ -9,12 +9,12 @@ import org.apache.spark.{Partition, TaskContext}
 class SimilarityRDD[U: ClassTag](prev: RDD[U], preservesPartitioning: Boolean) extends RDD[U](prev){
 
   val nodeIPs = Array (
-    "user-17",
-    "user-19",
+    "user-17", // original
+    "user-19", // original
     //"user-231",
-    "user-243",
+    "user-243", // original
     //"user-234",
-    "user-244"
+    "user-244"// original
     //"user-232",
     //"user-233"
   )

@@ -271,7 +271,7 @@ object DS_SimJoin_stream_ver3{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 8
+      val partition_num:Int = 4
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
@@ -421,6 +421,8 @@ object DS_SimJoin_stream_ver3{
       var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = cache_file.rdd
       cachedPRDD = rows.map( x => (x(4).asInstanceOf[Long].intValue(),((x(1).toString,x(3).toString), x(2).toString.toBoolean, 5, 5))) // 100 is initial data( random )
       cachedPRDD = new SimilarityRDD(cachedPRDD.partitionBy(shashP), true).cache()
+
+
             
       
       /* build LRU_RDD using index(cache) data 
@@ -480,6 +482,8 @@ object DS_SimJoin_stream_ver3{
               
 
               var t0 = System.currentTimeMillis
+              //println("DB_PRDD.partitioner: "+DB_PRDD.partitioner)    //Hash
+              //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
 
               if(isEmpty_missedData_th == true){
                 cacheTmp = cachedPRDD
@@ -487,6 +491,7 @@ object DS_SimJoin_stream_ver3{
                 cacheTmp = cachedPRDD.union(DB_PRDD)
 
               }
+              //println("cacheTmp.partitioner: "+cacheTmp.partitioner)
 
               if(hit_time > miss_time ) clean = true
               else clean = false
@@ -518,21 +523,23 @@ object DS_SimJoin_stream_ver3{
                 newIter.iterator
                   
                 }, preservesPartitioning = true)
-
-              }else {
-                cacheTmp = cacheTmp
               }
-
 
               println("cache|cache threshold : "+threshold+", clean : "+clean+", removeTop : "+removeTop)
 
- 
-              if(streamingIteration_th % checkoutval == 0){
+              
+
+              if(streamingIteration % checkoutval == 0){
                 println("=======Localchechpoint======")
                 cacheTmp.localCheckpoint
               }
-              
+
+              var test1 = System.currentTimeMillis
               cachedDataCount = cacheTmp.cache.count // check cache cout
+              var test2 = System.currentTimeMillis
+              println("time|6|create test1: " + (test2 - test1) + " ms")
+              
+              
 
               println("data|c|cached count(after union): " + cachedDataCount)  
               cached_sum = cached_sum + cachedDataCount
@@ -550,7 +557,7 @@ object DS_SimJoin_stream_ver3{
           }// CacheThread END
 
           CacheThread.start
-
+          
           var t0 = System.currentTimeMillis 
           
           var queryForIndex = new SimilarityRDD(queryRDD.map(x => (sortByValue(x._1), x._2))
@@ -583,7 +590,7 @@ object DS_SimJoin_stream_ver3{
           
           zippedRDD = queryForIndex.zipPartitions(cachedPRDD, true){
             (leftIter, rightIter) => {
-              val indexSort = sort2(rightIter.toArray) // Array(cache signature)
+              val indexSort = sort2(rightIter.toArray)//rightIter.toArray//  // Array(cache signature)
               val querySort = sort3(leftIter.toArray)
               val ilen = indexSort.size
               val qlen = querySort.size
@@ -814,7 +821,7 @@ object DS_SimJoin_stream_ver3{
           streaming_data_all = streaming_data_all + outputCount.toInt
           println("data|all|streaming data all: " + streaming_data_all)
 
-          if(streaming_data_all > 300000 ){
+          if(( tEnd - start_total) > 1800000 ){
             ssc.stop()
           }
 

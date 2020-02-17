@@ -32,9 +32,9 @@ object BuildSig_save{
       val sc = new SparkContext(conf)
 
       val data_num = args(0).toString
-      val coll_name = "mongodb://192.168.0.10:27018/dblp.SF_"+data_num+"k"
+      val coll_name = "mongodb://192.168.0.10:27018/imdb.SF_"+data_num+"k_2"
       println(coll_name) 
-      val save_coll_name = "mongodb://192.168.0.10:27018/dblp.SF_sig"+data_num+"k"  
+      val save_coll_name = "mongodb://192.168.0.10:27018/imdb.SF_sig"+data_num+"k"  
       println(save_coll_name) 
 
       val readConfig = ReadConfig(Map(
@@ -43,7 +43,7 @@ object BuildSig_save{
        ))
 
       val load = MongoSpark.load(sc,readConfig)
-      val preRDD = load.map( x => x.getString("title"))
+      val preRDD = load.map( x => x.getString("reviewText"))
 
       preRDD.take(3).foreach(x => println("datat : "+x))
 
@@ -57,14 +57,22 @@ object BuildSig_save{
             (x._1, x._2._1._1, x._2._1._2, x._2._2))//.distinct()
       /* save to mongo DB */
       
-      /*
+      
       var paralIndex = saveIndex.map(x => { 
                             new Document().append("signature", x._1).append("inverse", x._2).append("raw", x._3).append("isDel", x._4) 
                           })
       paralIndex.saveToMongoDB(WriteConfig(Map("spark.mongodb.output.uri" -> save_coll_name)))
-      */
+      
+  
+      println("==> finished load  1")
 
-      println("==> finished load ")
+      
+
+    
+    
+
+      
+     
 
       /* save to file 
       
