@@ -257,7 +257,7 @@ object DS_SimJoin_stream_ver2_3{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 4
+      val partition_num:Int = 8
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
@@ -922,7 +922,7 @@ object DS_SimJoin_stream_ver2_3{
       var end_total = System.currentTimeMillis
       var total_time = end_total - start_total
 
-      println("\n\n======(ver2_3, zip + cache parelle )Streaming average log=====\n")
+      println("\n\n======(ver2_3, zip + cache parelle x)Streaming average log=====\n")
       println("> total streaming iteration : "+streamingIteration)
       println("data|query_sum: " + query_sum/streamingIteration)
       println("time|build queryRDD_sum: "+queryRDD_sum/streamingIteration+" ms")

@@ -271,7 +271,7 @@ object DS_SimJoin_stream_ver3{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 4
+      val partition_num:Int = 8
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
@@ -289,7 +289,7 @@ object DS_SimJoin_stream_ver3{
       var sCachingWindow_preTime: Long = 0
       var sCachingWindow_time: Long = 0
       var alphaValue: Long = 215
-      val checkoutval = 10 //
+      val checkoutval = 40 //
 
       var enableCacheCleaningFunction = true
       var isPerformed_CC_PrevIter = false

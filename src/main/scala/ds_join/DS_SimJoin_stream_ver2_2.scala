@@ -257,7 +257,7 @@ object DS_SimJoin_stream_ver2_2{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 4
+      val partition_num:Int = 8
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0

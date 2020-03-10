@@ -257,7 +257,7 @@ object DS_SimJoin_stream_ver2{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 4
+      val partition_num:Int = 8
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
@@ -275,7 +275,7 @@ object DS_SimJoin_stream_ver2{
       var sCachingWindow_preTime: Long = 0
       var sCachingWindow_time: Long = 0
       var alphaValue: Long = 215
-      val checkoutval = 10 //
+      val checkoutval = 40 //
 
       var enableCacheCleaningFunction = true
       var isPerformed_CC_PrevIter = false
@@ -367,8 +367,8 @@ object DS_SimJoin_stream_ver2{
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
       val db_coll_name = "SF_sig"+data_num+"k"
-      val coll_name = "mongodb://192.168.0.10:27018/dblp.SF_"+data_num+"k"
-      val cache_name = "/home/user/Desktop/hongji/ref/dblp_sig1k.json"   
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
+      val cache_name = "/home/user/Desktop/hongji/ref/SF_sig1k.json"   
       var qlist = List[Int]()
 
       //change mongospark version = 2.2.6  to 2.1.0
@@ -378,7 +378,7 @@ object DS_SimJoin_stream_ver2{
         "spark.mongodb.input.readPreference.name" -> "primaryPreferred"      
        ))
       val load = MongoSpark.load(sc,readConfig)
-      val preRDD = load.map( x => x.getString("title"))
+      val preRDD = load.map( x => x.getString("reviewText"))
       val dataRDD = preRDD.map(x => (x,x))
 
       /*
@@ -445,7 +445,7 @@ object DS_SimJoin_stream_ver2{
           println("\n\nStart|Stream num: " + streamingIteration)
        
           var input_file = sqlContext.read.json(rdd)
-          var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("title").rdd
+          var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("reviewText").rdd // title , reviewText
           // rows.collect().foreach(println)
           var queryRDD = rows.map( x => (x(0).toString, x(0).toString)).filter(s => (s._1.length > 10))//.filter(s => !s._1.isEmpty).filter(s => (s._1.length < 5))//.partitionBy(hashP)
           if(queryRDD.isEmpty) println("queryRDD.isEmpty")
@@ -668,8 +668,8 @@ object DS_SimJoin_stream_ver2{
 
           var tt0 = System.currentTimeMillis 
           var ans1 = mutable.ListBuffer[(Int, (((Int, String, Array[(Array[Int], Array[Boolean])]), Boolean, Array[Boolean], Boolean, Int), ((String, String), Boolean), Boolean ))]()
-          //println("queryForIndex.partitioner: "+queryForIndex.partitioner)    //Hash
-          //println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
+          println("queryForIndex.partitioner: "+queryForIndex.partitioner)    //Hash
+          println("cachedPRDD.partitioner: "+cachedPRDD.partitioner)    //Hash
           zippedRDD = queryForIndex.zipPartitions(cachedPRDD, true){
             (leftIter, rightIter) => {
               val indexSort = sort2(rightIter.toArray) // Array(cache signature)
@@ -749,7 +749,7 @@ object DS_SimJoin_stream_ver2{
                   var t0 = System.currentTimeMillis
 
                   val client: MongoClient = MongoClient("mongodb://192.168.0.10:27018") //mongos server
-                  val database: MongoDatabase = client.getDatabase("dblp")
+                  val database: MongoDatabase = client.getDatabase("amazon")
                   val collection: MongoCollection[Document] = database.getCollection(db_coll_name)
 
                   var qlist = List[Int]()

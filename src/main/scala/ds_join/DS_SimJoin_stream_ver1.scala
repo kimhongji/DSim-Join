@@ -28,6 +28,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.collection.mutable
 
+import scala.collection.mutable.Map
+
 
 /*Complile*/
 /*
@@ -256,7 +258,7 @@ object DS_SimJoin_stream_ver1{
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
       var AvgStream:Array[Long] = Array()
 
-      val partition_num:Int = 4
+      val partition_num:Int = 8
       val threshold:Double = 0.8  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
@@ -274,7 +276,7 @@ object DS_SimJoin_stream_ver1{
       var sCachingWindow_preTime: Long = 0
       var sCachingWindow_time: Long = 0
       var alphaValue: Long = 215
-      val checkoutval = 10 //
+      val checkoutval = 40 //
 
       var enableCacheCleaningFunction = true
       var isPerformed_CC_PrevIter = false
@@ -364,8 +366,8 @@ object DS_SimJoin_stream_ver1{
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
       val db_coll_name = "SF_sig"+data_num+"k"
-      val coll_name = "mongodb://192.168.0.10:27018/dblp.SF_"+data_num+"k"
-      val cache_name = "/home/user/Desktop/hongji/ref/dblp_sig1k.json"   
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
+      val cache_name = "/home/user/Desktop/hongji/ref/SF_sig1k.json"   
       var qlist = List[Int]()
 
       //change mongospark version = 2.2.6  to 2.1.0
@@ -375,7 +377,7 @@ object DS_SimJoin_stream_ver1{
         "spark.mongodb.input.readPreference.name" -> "primaryPreferred"      
        ))
       val load = MongoSpark.load(sc,readConfig)
-      val preRDD = load.map( x => x.getString("title"))
+      val preRDD = load.map( x => x.getString("reviewText"))
       val dataRDD = preRDD.map(x => (x,x))
 
       /*
@@ -420,6 +422,7 @@ object DS_SimJoin_stream_ver1{
       */
 
 
+      var m = Map[Int, Int]()
 
       var start_total = System.currentTimeMillis
       stream.foreachRDD({ rdd =>
@@ -448,7 +451,7 @@ object DS_SimJoin_stream_ver1{
           println("\n\nStart|Stream num: " + streamingIteration)
        
           var input_file = sqlContext.read.json(rdd)
-          var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("title").rdd
+          var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = input_file.select("reviewText").rdd
           // rows.collect().foreach(println)
           var k0 =System.currentTimeMillis
           var queryRDD = rows.map( x => (x(0).toString, x(0).toString)).filter(s => (s._1.length > 10))//.filter(s => (s._1.length < 5))//.partitionBy(hashP)
@@ -477,6 +480,16 @@ object DS_SimJoin_stream_ver1{
                   .map(x => { (x._2._1, (x._1, x._2._2, x._2._3, x._2._4, x._2._5))}).partitionBy(shashP), true).cache() //x._2._1 => sig 
           queryForIndex.count()
 
+          //queryForIndex.collect().foreach(x => {
+          //  val d = m.getOrElse(x._1,0)
+          //  m(x._1) = d+1
+          //})
+
+
+          
+
+
+
           var t1= System.currentTimeMillis
           println("time|ex|queryForIndex : " + (t1 - t0) + " ms")
           queryRDD_sum = queryRDD_sum + (t1 - t0)
@@ -493,7 +506,7 @@ object DS_SimJoin_stream_ver1{
               var mappedMRDD = queryForIndex.mapPartitions({ iter =>
 
                   val client: MongoClient = MongoClient("mongodb://192.168.0.10:27018") //mongos server
-                  val database: MongoDatabase = client.getDatabase("dblp")
+                  val database: MongoDatabase = client.getDatabase("amazon")
                   val collection: MongoCollection[Document] = database.getCollection(db_coll_name)
 
                   var qlist = List[Int]()
@@ -560,6 +573,8 @@ object DS_SimJoin_stream_ver1{
 
           
 
+          
+
           val tEnd = System.currentTimeMillis
           currStreamTime = tEnd - tStart
           println("time|8|latency: " + currStreamTime + " ms")
@@ -611,6 +626,8 @@ object DS_SimJoin_stream_ver1{
       ssc.awaitTermination()
       var end_total = System.currentTimeMillis
       var total_time = end_total - start_total
+
+      //m.foreach(x => println(x._1+", "+x._2))
 
       println("\n\n======(ver1)Streaming average log=====\n")
       println("> total streaming iteration : "+streamingIteration)
