@@ -404,6 +404,8 @@ object DS_SimJoin_stream_ver2_2{
       var rows: org.apache.spark.rdd.RDD[org.apache.spark.sql.Row] = cache_file.rdd
       cachedPRDD = rows.map( x => (x(4).asInstanceOf[Long].intValue(),((x(1).toString,x(3).toString),x(2).toString.toBoolean)))
       cachedPRDD = cachedPRDD.partitionBy(shashP).cache()
+
+      
             
       
       /* build LRU_RDD using index(cache) data */

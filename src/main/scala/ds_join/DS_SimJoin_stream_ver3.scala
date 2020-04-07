@@ -269,10 +269,15 @@ object DS_SimJoin_stream_ver3{
       var sqlContext = new SQLContext(sc)
       val ssc = new StreamingContext(sc, Milliseconds(3000)) // 700
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
+      val stream2 = ssc.socketTextStream("192.168.0.15", 9998)
+      val stream3 = ssc.socketTextStream("192.168.0.15", 9997)
+      val stream4 = ssc.socketTextStream("192.168.0.15", 9996)
+
+      //val stream1 = stream.union(stream2).union(stream3).union(stream4)
       var AvgStream:Array[Long] = Array()
 
       val partition_num:Int = 8
-      val threshold:Double = 0.8  // threshold!!!!!!!
+      val threshold:Double = 0.85  // threshold!!!!!!!
       val alpha = 0.95
       var minimum:Int = 0
       var topDegree = 0
@@ -289,7 +294,7 @@ object DS_SimJoin_stream_ver3{
       var sCachingWindow_preTime: Long = 0
       var sCachingWindow_time: Long = 0
       var alphaValue: Long = 215
-      val checkoutval = 40 //
+      val checkoutval = 10 //
 
       var enableCacheCleaningFunction = true
       var isPerformed_CC_PrevIter = false
@@ -383,7 +388,7 @@ object DS_SimJoin_stream_ver3{
 
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
-      val db_coll_name = "SF_sig"+data_num+"k"
+      val db_coll_name = "SF_sig"+data_num+"k_85"
       val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
       val cache_name = "/home/user/Desktop/hongji/ref/SF_sig1k.json"   
       var qlist = List[Int]()
@@ -431,7 +436,7 @@ object DS_SimJoin_stream_ver3{
          LRU_RDD.cache().count()
       }
       */
-
+      println("threshold : "+threshold)
       println("index coll: "+coll_name)
       println("cache coll: "+cache_name)
       println("sig_index coll: "+db_coll_name)
@@ -603,12 +608,14 @@ object DS_SimJoin_stream_ver3{
                 }else if(querySort(q)._1 < indexSort(i)._1){
                   if(i > 0 && querySort(q)._1 != indexSort(i-1)._1 ) {
                     ans1 += Tuple2(querySort(q)._1, (querySort(q)._2 , null, false))
+                    println("no match : "+querySort(q)._1+" query : "+querySort(q)._2._1._2)
                   }
                   q = q + 1
                 }else if(querySort(q)._1 > indexSort(i)._1) { 
                   i =  i + 1
                 }else {
                       ans1 += Tuple2(querySort(q)._1, (querySort(q)._2 , indexSort(i)._2, true))
+                      println("match : "+querySort(q)._1+" query : "+querySort(q)._2._1._2+", "+"cache : "+indexSort(i)._2._1._2)
                   i = i + 1
                  }
               }
@@ -618,7 +625,7 @@ object DS_SimJoin_stream_ver3{
          
           var zipCount = zippedRDD.filter(s => (s._2._3)).count()
           println("data|hc|zipCount count: " + zipCount )
-         
+
           var tt1 = System.currentTimeMillis
           println("time|ex|zippedRDD.mapPartitions: " + (tt1 - tt0) + " ms")
           cogroup_query_cache_sum = cogroup_query_cache_sum + (tt1 - tt0) 

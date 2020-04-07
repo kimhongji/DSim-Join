@@ -108,7 +108,7 @@ object BuildSig{
                   ) ={ 
 
   //val numPartitions = 4
-  val threshold:Double = 0.8  // threshold!!!!!!!
+  val threshold:Double = 0.85  // threshold!!!!!!!
   val alpha = 0.95
   var startTime_2:Double = 0
   var endTime_2:Double = 0
@@ -234,6 +234,7 @@ object BuildSig{
 
  	/* input random value */
 
+    println("threshold_buildsig : "+threshold)
 
     val dataRDD = data    //cached
     /* 

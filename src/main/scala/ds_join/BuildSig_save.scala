@@ -32,9 +32,9 @@ object BuildSig_save{
       val sc = new SparkContext(conf)
 
       val data_num = args(0).toString
-      val coll_name = "mongodb://192.168.0.10:27018/imdb.SF_"+data_num+"k_2"
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k_1" 
       println(coll_name) 
-      val save_coll_name = "mongodb://192.168.0.10:27018/imdb.SF_sig"+data_num+"k"  
+      val save_coll_name = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k_85" //85, 90, 95
       println(save_coll_name) 
 
       val readConfig = ReadConfig(Map(
@@ -45,11 +45,11 @@ object BuildSig_save{
       val load = MongoSpark.load(sc,readConfig)
       val preRDD = load.map( x => x.getString("reviewText"))
 
-      preRDD.take(3).foreach(x => println("datat : "+x))
+      //preRDD.take(3).foreach(x => println("datat : "+x))
 
       val dataRDD = preRDD.map(x => (x,x))
 
-      var buildIndexSig = BuildSig.main(sc, dataRDD, 8) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
+      var buildIndexSig = BuildSig.main(sc, dataRDD, 4) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
 
       var index = buildIndexSig._1
 
@@ -66,10 +66,45 @@ object BuildSig_save{
   
       println("==> finished load  1")
 
+       /*
+      val coll_name2 = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k_5" 
+      println(coll_name2) 
+      val save_coll_name2 = "mongodb://192.168.0.10:27018/amazon.SF_sig"+data_num+"k_90" //85, 90, 95
+      println(save_coll_name2) 
+
+     
+      val readConfig2 = ReadConfig(Map(
+        "spark.mongodb.input.uri" -> coll_name2,
+        "spark.mongodb.input.readPreference.name" -> "primaryPreferred"      
+       ))
+
+      val load2 = MongoSpark.load(sc,readConfig2)
+      val preRDD2 = load2.map( x => x.getString("reviewText"))
+
+      //preRDD.take(3).foreach(x => println("datat : "+x))
+
+      val dataRDD2 = preRDD2.map(x => (x,x))
+
+      var buildIndexSig2 = BuildSig.main(sc, dataRDD2, 4) // buildIndexSig = tuple4 ( index, f , multiGroup, sc )
+
+      var index2 = buildIndexSig2._1
+
+      var saveIndex2 = index2.map(x =>  
+            (x._1, x._2._1._1, x._2._1._2, x._2._2))//.distinct()
+      /* save to mongo DB */
       
+      
+      var paralIndex2 = saveIndex2.map(x => { 
+                            new Document().append("signature", x._1).append("inverse", x._2).append("raw", x._3).append("isDel", x._4) 
+                          })
+      paralIndex2.saveToMongoDB(WriteConfig(Map("spark.mongodb.output.uri" -> save_coll_name2)))
+      
+  
+      println("==> finished load  2")
+
 
     
-    
+    */
 
       
      

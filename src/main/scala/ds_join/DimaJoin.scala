@@ -47,10 +47,11 @@ sbt clean assembly
 object DimaJoin{
 
   var numPartitions:Int = 4
-  val threshold:Double = 0.8  // threshold!!!!!!!
+  val threshold:Double = 0.85  // threshold!!!!!!! //parameter
   //var distribute:Array[Long] = Array()
   var distribute = new Array[Long](4)
 
+  
 
     def multigroup(mini: Int,
                  maxi: Int,
@@ -672,6 +673,8 @@ object DimaJoin{
 
   //var conf = new SparkConf().setAppName("DimaJoin")
   //var sc = new SparkContext(conf)
+
+  println("threshold(dimajoin): "+threshold)
 
   startTime_2 = System.currentTimeMillis();
   dimajoined = buildIndex()

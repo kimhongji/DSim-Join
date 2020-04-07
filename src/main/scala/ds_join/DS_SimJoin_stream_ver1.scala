@@ -256,10 +256,16 @@ object DS_SimJoin_stream_ver1{
       var sqlContext = new SQLContext(sc)
       val ssc = new StreamingContext(sc, Milliseconds(3000)) // 5000 / sleep 15 
       val stream = ssc.socketTextStream("192.168.0.15", 9999)
+      val stream2 = ssc.socketTextStream("192.168.0.15", 9998)
+      val stream3 = ssc.socketTextStream("192.168.0.15", 9997)
+      val stream4 = ssc.socketTextStream("192.168.0.15", 9996)
+
+      //val stream1 = stream.union(stream2).union(stream3).union(stream4)
       var AvgStream:Array[Long] = Array()
 
+
       val partition_num:Int = 8
-      val threshold:Double = 0.8  // threshold!!!!!!!
+      val threshold:Double = 0.90  // threshold!!!!!!! //85, 90, 95 // parameter
       val alpha = 0.95
       var minimum:Int = 0
       var topDegree = 0
@@ -276,7 +282,7 @@ object DS_SimJoin_stream_ver1{
       var sCachingWindow_preTime: Long = 0
       var sCachingWindow_time: Long = 0
       var alphaValue: Long = 215
-      val checkoutval = 40 //
+      val checkoutval = 10 // parameter
 
       var enableCacheCleaningFunction = true
       var isPerformed_CC_PrevIter = false
@@ -365,9 +371,9 @@ object DS_SimJoin_stream_ver1{
 
       val data_num = args(0).toString
       //val db_coll_name = "Musical_Sig"+data_num
-      val db_coll_name = "SF_sig"+data_num+"k"
-      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"
-      val cache_name = "/home/user/Desktop/hongji/ref/SF_sig1k.json"   
+      val db_coll_name = "SF_sig"+data_num+"k_90"  //85, 90, 95 // parameter
+      val coll_name = "mongodb://192.168.0.10:27018/amazon.SF_"+data_num+"k"// parameter
+      val cache_name = "/home/user/Desktop/hongji/ref/SF_sig1k.json"   // parameter
       var qlist = List[Int]()
 
       //change mongospark version = 2.2.6  to 2.1.0
@@ -412,6 +418,8 @@ object DS_SimJoin_stream_ver1{
       }
 
       */
+
+      println("threshold : "+threshold)
 
       println("index coll: "+coll_name)
       //println("cache coll: "+cache_name)
@@ -484,9 +492,6 @@ object DS_SimJoin_stream_ver1{
           //  val d = m.getOrElse(x._1,0)
           //  m(x._1) = d+1
           //})
-
-
-          
 
 
 
