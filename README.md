@@ -1,4 +1,4 @@
-# DIMA + DL-Join ( Distributed Streaming Similarity Join ) 
+# Semi-Stream Similarity Join Processing in a Distributed Environment
 ## how to compile spark project
 ```
 > sbt clean assembly
