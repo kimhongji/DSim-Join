@@ -1,6 +1,6 @@
 # Semi-Stream Similarity Join Processing in a Distributed Environment
 
-https://ieeexplore.ieee.org/abstract/document/9141233
+논문 출판본: https://ieeexplore.ieee.org/abstract/document/9141233
 
 ## how to compile spark project
 ```
